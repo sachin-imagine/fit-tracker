@@ -8,6 +8,13 @@
  * buttons.
  */
 
+// Bump this string whenever app.js changes, and check it in the
+// browser console (F12 > Console) to confirm the deployed file
+// actually matches what you think you pushed — partial updates
+// across index.html/app.js/api.js are a common source of confusing
+// bugs otherwise.
+console.info('Fit Tracker app.js — build: email-code-auth-v2 (with resend cooldown)');
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('service-worker.js').catch((err) => {
@@ -48,13 +55,58 @@ document.getElementById('signout-btn').addEventListener('click', () => {
   showScreen('screen-signin');
 });
 
+// --- Resend cooldown helper --------------------------------------------
+
+const RESEND_COOLDOWN_SECONDS = 30;
+
+/**
+ * Disables a button and counts down its label for `seconds`, then
+ * restores it to idleLabel and re-enables it. Attached to the button
+ * element itself so a second call (e.g. switching screens and back)
+ * safely replaces any in-flight countdown instead of stacking two.
+ */
+function startResendCooldown_(buttonEl, seconds, idleLabel) {
+  if (buttonEl._cooldownInterval) {
+    clearInterval(buttonEl._cooldownInterval);
+  }
+  let remaining = seconds;
+  buttonEl.disabled = true;
+  buttonEl.textContent = `Resend in ${remaining}s`;
+  buttonEl._cooldownInterval = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(buttonEl._cooldownInterval);
+      buttonEl._cooldownInterval = null;
+      buttonEl.disabled = false;
+      buttonEl.textContent = idleLabel;
+    } else {
+      buttonEl.textContent = `Resend in ${remaining}s`;
+    }
+  }, 1000);
+}
+
+function resetCooldown_(buttonEl, idleLabel) {
+  if (buttonEl._cooldownInterval) {
+    clearInterval(buttonEl._cooldownInterval);
+    buttonEl._cooldownInterval = null;
+  }
+  buttonEl.disabled = false;
+  buttonEl.textContent = idleLabel;
+}
+
 // --- Sign-in: request code -------------------------------------------
 
 document.getElementById('signin-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   const errorEl = document.getElementById('signin-error');
   errorEl.hidden = true;
+
+  if (submitBtn.disabled) return; // already sending or cooling down — ignore extra clicks/Enter presses
+
   const email = new FormData(e.target).get('email').trim().toLowerCase();
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Sending...';
 
   try {
     await apiPost('requestLoginCode', { email });
@@ -62,9 +114,18 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
     document.getElementById('verify-email').textContent = email;
     document.getElementById('verify-form').reset();
     showScreen('screen-verify');
+    startResendCooldown_(submitBtn, RESEND_COOLDOWN_SECONDS, 'Send code');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
+    // If the backend itself is enforcing the cooldown (e.g. a stray
+    // double-submit got through), reflect that countdown instead of
+    // just re-enabling immediately and inviting another failed click.
+    if (/wait/i.test(err.message)) {
+      startResendCooldown_(submitBtn, RESEND_COOLDOWN_SECONDS, 'Send code');
+    } else {
+      resetCooldown_(submitBtn, 'Send code');
+    }
   }
 });
 
@@ -87,19 +148,33 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
 });
 
 document.getElementById('resend-code-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('resend-code-btn');
+  if (btn.disabled) return;
   const errorEl = document.getElementById('verify-error');
   errorEl.hidden = true;
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+
   try {
     await apiPost('requestLoginCode', { email: pendingEmail });
+    startResendCooldown_(btn, RESEND_COOLDOWN_SECONDS, 'Resend code');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
+    if (/wait/i.test(err.message)) {
+      startResendCooldown_(btn, RESEND_COOLDOWN_SECONDS, 'Resend code');
+    } else {
+      resetCooldown_(btn, 'Resend code');
+    }
   }
 });
 
 document.getElementById('use-different-email-btn').addEventListener('click', () => {
   pendingEmail = null;
-  document.getElementById('signin-form').reset();
+  const signinForm = document.getElementById('signin-form');
+  signinForm.reset();
+  resetCooldown_(signinForm.querySelector('button[type="submit"]'), 'Send code');
+  resetCooldown_(document.getElementById('resend-code-btn'), 'Resend code');
   showScreen('screen-signin');
 });
 
