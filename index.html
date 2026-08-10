@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Sachin Fit Tracker</title>
+
+<!-- PWA / iOS home-screen behavior -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b1120">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FitTracker">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- SCREEN: First-run profile setup -->
+  <section id="screen-setup" class="screen">
+    <header class="screen-header">
+      <h1>Welcome 👋</h1>
+      <p class="subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
+    </header>
+
+    <form id="setup-form" class="form">
+      <label>Age
+        <input type="number" name="age" required min="10" max="100">
+      </label>
+      <label>Height (cm)
+        <input type="number" name="heightCm" required min="100" max="250">
+      </label>
+      <label>Current weight (kg)
+        <input type="number" step="0.1" name="startWeightKg" required min="30" max="250">
+      </label>
+      <label>Target weight (kg)
+        <input type="number" step="0.1" name="targetWeightKg" required min="30" max="250">
+      </label>
+      <label>Fitness goal
+        <select name="goal" required>
+          <option value="">Select one</option>
+          <option>Fat loss</option>
+          <option>Muscle gain</option>
+          <option>Recomposition</option>
+          <option>General fitness / maintenance</option>
+          <option>Strength</option>
+          <option>Endurance</option>
+        </select>
+      </label>
+      <label>Training experience
+        <select name="trainingExperience">
+          <option value="">Select one</option>
+          <option>Beginner (0–1 yr)</option>
+          <option>Intermediate (1–3 yr)</option>
+          <option>Advanced (3+ yr)</option>
+        </select>
+      </label>
+      <label>Workout days per week
+        <input type="number" name="workoutDaysPerWeek" min="1" max="7">
+      </label>
+      <label>Preferred workout duration (minutes)
+        <input type="number" name="preferredWorkoutDurationMin" min="10" max="180">
+      </label>
+      <label>Available gym equipment
+        <textarea name="availableEquipment" rows="2" placeholder="e.g. full gym, dumbbells only, bodyweight only"></textarea>
+      </label>
+      <label>Dietary preferences
+        <textarea name="dietaryPreferences" rows="2" placeholder="e.g. vegetarian, no dairy, high protein"></textarea>
+      </label>
+      <label>Typical daily schedule
+        <textarea name="typicalSchedule" rows="2" placeholder="e.g. gym mornings 7am, desk job 9-6, dinner ~9pm"></textarea>
+      </label>
+
+      <p id="setup-error" class="error-text" hidden></p>
+      <button type="submit" class="btn-primary">Save profile & continue</button>
+    </form>
+  </section>
+
+  <!-- SCREEN: Dashboard (Today) -->
+  <section id="screen-dashboard" class="screen" hidden>
+    <header class="screen-header">
+      <h1>Today</h1>
+      <p class="subtitle" id="today-date"></p>
+    </header>
+
+    <div class="card-grid">
+      <div class="stat-card">
+        <span class="stat-label">Weight</span>
+        <span class="stat-value" id="stat-weight">–</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Calories</span>
+        <span class="stat-value" id="stat-calories">– / –</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Protein</span>
+        <span class="stat-value" id="stat-protein">– / –</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Water</span>
+        <span class="stat-value" id="stat-water">– / –</span>
+      </div>
+    </div>
+
+    <div class="notice-card">
+      <strong>Phase 1 foundation is live.</strong>
+      <p>Food photo logging, workout tracking, form-check videos, and the AI coach arrive in the next phases. This screen will fill in as each phase ships.</p>
+    </div>
+
+    <div class="quick-actions">
+      <button class="quick-btn" disabled>📸<span>Add Food</span></button>
+      <button class="quick-btn" disabled>🏋️<span>Log Workout</span></button>
+      <button class="quick-btn" disabled>🎥<span>Form Check</span></button>
+      <button class="quick-btn" disabled>⚖️<span>Log Weight</span></button>
+    </div>
+  </section>
+
+  <!-- SCREEN: Profile (view/edit) -->
+  <section id="screen-profile" class="screen" hidden>
+    <header class="screen-header">
+      <h1>Profile</h1>
+    </header>
+    <pre id="profile-json" class="profile-dump"></pre>
+  </section>
+
+  <!-- Bottom navigation -->
+  <nav class="bottom-nav" id="bottom-nav" hidden>
+    <button class="nav-btn active" data-screen="screen-dashboard">
+      <span>🏠</span><small>Today</small>
+    </button>
+    <button class="nav-btn" data-screen="screen-log" disabled>
+      <span>📋</span><small>Log</small>
+    </button>
+    <button class="nav-btn" data-screen="screen-coach" disabled>
+      <span>🤖</span><small>Coach</small>
+    </button>
+    <button class="nav-btn" data-screen="screen-profile">
+      <span>👤</span><small>Profile</small>
+    </button>
+  </nav>
+
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
