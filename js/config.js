@@ -13,7 +13,7 @@ const CONFIG = {
   // Paste the URL you get after "Deploy > New deployment > Web app" in
   // the Apps Script editor. It looks like:
   // https://script.google.com/macros/s/AKfycbxgMqWW3QmWltdaAwSfYEXPADDN2bYhDY2kcOLOzzFjfzucVcCHvP0JOhWuyGGs5CT2lQ/exec
-  APPS_SCRIPT_URL: 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbxgMqWW3QmWltdaAwSfYEXPADDN2bYhDY2kcOLOzzFjfzucVcCHvP0JOhWuyGGs5CT2lQ/exec',
 
   // Any random string — must match the API_SHARED_TOKEN Script
   // Property you set in the Apps Script editor.
