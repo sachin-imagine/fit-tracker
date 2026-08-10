@@ -17,5 +17,5 @@ const CONFIG = {
 
   // Any random string — must match the API_SHARED_TOKEN Script
   // Property you set in the Apps Script editor.
-  API_TOKEN: '1IWG2jTGCBWoBuIP2Ks5hKJjZrTpKJIRUcEzIaEUoppo'
+  API_TOKEN: 'r0nehegd2zbxswepdczp89jhmm7p67'
 };
