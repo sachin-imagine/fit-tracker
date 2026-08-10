@@ -114,7 +114,12 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
     document.getElementById('verify-email').textContent = email;
     document.getElementById('verify-form').reset();
     showScreen('screen-verify');
-    startResendCooldown_(submitBtn, RESEND_COOLDOWN_SECONDS, 'Send code');
+    // The countdown that matters is on the screen the user is now
+    // looking at (Resend code) — the Send code button they just left
+    // isn't visible, so put it back to normal for if they return via
+    // "Use a different email".
+    resetCooldown_(submitBtn, 'Send code');
+    startResendCooldown_(document.getElementById('resend-code-btn'), RESEND_COOLDOWN_SECONDS, 'Resend code');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
