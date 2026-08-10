@@ -11,6 +11,15 @@
 
 * { box-sizing: border-box; }
 
+/* Belt-and-suspenders: any element with the `hidden` attribute must
+   stay hidden even if another rule below (like .screen-center's
+   `display: flex`) targets the same element and would otherwise win,
+   since author CSS normally overrides the browser's default [hidden]
+   handling regardless of selector specificity. Without this, screens
+   using .screen-center rendered on top of each other instead of
+   swapping. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;

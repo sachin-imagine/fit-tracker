@@ -13,6 +13,8 @@
  * the 30-day session actually expires.
  */
 
+console.info('Fit Tracker api.js — build: email-code-auth-v2 (sessionToken-based)');
+
 const SESSION_STORAGE_KEY = 'fitTrackerSessionToken';
 let currentSessionToken = localStorage.getItem(SESSION_STORAGE_KEY) || null;
 
