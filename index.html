@@ -19,10 +19,59 @@
 
 <div id="app">
 
+  <!-- SCREEN: Sign in (email) -->
+  <section id="screen-signin" class="screen screen-center">
+    <div class="signin-box">
+      <h1>Sachin Fit Tracker 🏋️</h1>
+      <p class="subtitle">Enter your email — we'll send you a 6-digit code to sign in. Family members get their own private data in the same app.</p>
+      <form id="signin-form" class="form">
+        <label>Email
+          <input type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+        </label>
+        <p id="signin-error" class="error-text" hidden></p>
+        <button type="submit" class="btn-primary">Send code</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- SCREEN: Enter the emailed code -->
+  <section id="screen-verify" class="screen screen-center" hidden>
+    <div class="signin-box">
+      <h1>Check your email 📩</h1>
+      <p class="subtitle">We sent a 6-digit code to <span id="verify-email">your email</span>. It expires in 10 minutes.</p>
+      <form id="verify-form" class="form">
+        <label>Code
+          <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required
+            placeholder="000000" class="code-input">
+        </label>
+        <p id="verify-error" class="error-text" hidden></p>
+        <button type="submit" class="btn-primary">Verify & sign in</button>
+      </form>
+      <button id="resend-code-btn" class="btn-secondary">Resend code</button>
+      <button id="use-different-email-btn" class="btn-secondary">Use a different email</button>
+    </div>
+  </section>
+
+  <!-- SCREEN: Waiting on owner approval -->
+  <section id="screen-pending" class="screen screen-center" hidden>
+    <div class="signin-box">
+      <h1>Almost there ⏳</h1>
+      <p class="subtitle">Thanks, <span class="welcome-name">there</span>! Your access request has been sent to the app owner. You'll get an email once it's approved — no need to keep this open.</p>
+    </div>
+  </section>
+
+  <!-- SCREEN: Rejected -->
+  <section id="screen-rejected" class="screen screen-center" hidden>
+    <div class="signin-box">
+      <h1>Not approved</h1>
+      <p class="subtitle">Your access request wasn't approved. Contact the app owner if you think this is a mistake.</p>
+    </div>
+  </section>
+
   <!-- SCREEN: First-run profile setup -->
-  <section id="screen-setup" class="screen">
+  <section id="screen-setup" class="screen" hidden>
     <header class="screen-header">
-      <h1>Welcome 👋</h1>
+      <h1>Welcome, <span class="welcome-name">there</span> 👋</h1>
       <p class="subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
     </header>
 
@@ -39,17 +88,19 @@
       <label>Target weight (kg)
         <input type="number" step="0.1" name="targetWeightKg" required min="30" max="250">
       </label>
-      <label>Fitness goal
-        <select name="goal" required>
-          <option value="">Select one</option>
-          <option>Fat loss</option>
-          <option>Muscle gain</option>
-          <option>Recomposition</option>
-          <option>General fitness / maintenance</option>
-          <option>Strength</option>
-          <option>Endurance</option>
-        </select>
-      </label>
+
+      <div class="field-block">
+        <span class="field-label">Fitness goal(s) — pick as many as apply</span>
+        <div class="checkbox-grid">
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="Fat loss"> Fat loss</label>
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="Muscle gain"> Muscle gain</label>
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="Recomposition"> Recomposition</label>
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="General fitness / maintenance"> General fitness</label>
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="Strength"> Strength</label>
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="Endurance"> Endurance</label>
+        </div>
+      </div>
+
       <label>Training experience
         <select name="trainingExperience">
           <option value="">Select one</option>
@@ -82,7 +133,7 @@
   <!-- SCREEN: Dashboard (Today) -->
   <section id="screen-dashboard" class="screen" hidden>
     <header class="screen-header">
-      <h1>Today</h1>
+      <h1>Welcome back, <span class="welcome-name">there</span> 👋</h1>
       <p class="subtitle" id="today-date"></p>
     </header>
 
@@ -122,8 +173,10 @@
   <section id="screen-profile" class="screen" hidden>
     <header class="screen-header">
       <h1>Profile</h1>
+      <p class="subtitle welcome-name"></p>
     </header>
     <pre id="profile-json" class="profile-dump"></pre>
+    <button id="signout-btn" class="btn-secondary">Sign out</button>
   </section>
 
   <!-- Bottom navigation -->
