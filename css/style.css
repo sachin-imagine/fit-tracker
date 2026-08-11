@@ -104,6 +104,11 @@ textarea { resize: vertical; }
   font-size: 14px;
 }
 
+.notice-text {
+  color: var(--accent);
+  font-size: 14px;
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -206,7 +211,7 @@ textarea { resize: vertical; }
 .nav-btn[disabled] { opacity: 0.35; }
 .nav-btn small { font-size: 11px; }
 
-/* Sign-in / pending / rejected screens */
+/* Sign-in / loading / verify / pending / rejected screens */
 .screen-center {
   display: flex;
   align-items: center;
@@ -224,10 +229,19 @@ textarea { resize: vertical; }
   font-size: 24px;
 }
 
-.google-btn-holder {
-  margin-top: 24px;
-  display: flex;
-  justify-content: center;
+/* Loading spinner shown on screen-loading while checking a session */
+.spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 16px;
+  border: 3px solid var(--surface-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Multi-select goal checkboxes */

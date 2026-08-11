@@ -7,7 +7,7 @@
  * cached) so you're never looking at stale calories/weight/workouts.
  */
 
-const CACHE_NAME = 'fit-tracker-shell-v1';
+const CACHE_NAME = 'fit-tracker-shell-v3';
 const SHELL_FILES = [
   './',
   './index.html',

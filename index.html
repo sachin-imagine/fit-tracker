@@ -19,14 +19,26 @@
 
 <div id="app">
 
-  <!-- SCREEN: Sign in (email) -->
-  <section id="screen-signin" class="screen screen-center">
+  <!-- SCREEN: Loading / startup — visible by default (no `hidden`) so
+       there is never a flash of the sign-in screen before we know
+       whether an existing session is still good. -->
+  <section id="screen-loading" class="screen screen-center">
     <div class="signin-box">
-      <h1>Sachin Fit Tracker 🏋️</h1>
-      <p class="subtitle">Enter your email — we'll send you a 6-digit code to sign in. Family members get their own private data in the same app.</p>
+      <div id="loading-spinner" class="spinner"></div>
+      <p id="loading-text" class="subtitle">Loading…</p>
+      <p id="loading-error" class="error-text" hidden></p>
+      <button id="loading-retry-btn" class="btn-secondary" hidden>Retry</button>
+    </div>
+  </section>
+
+  <!-- SCREEN: Sign in with email -->
+  <section id="screen-signin" class="screen screen-center" hidden>
+    <div class="signin-box">
+      <h1>Sachin Fit Tracker</h1>
+      <p class="subtitle">Enter your email — we'll send you a 6-digit code, no password needed.</p>
       <form id="signin-form" class="form">
         <label>Email
-          <input type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+          <input type="email" name="email" required placeholder="you@example.com">
         </label>
         <p id="signin-error" class="error-text" hidden></p>
         <button type="submit" class="btn-primary">Send code</button>
@@ -37,41 +49,51 @@
   <!-- SCREEN: Enter the emailed code -->
   <section id="screen-verify" class="screen screen-center" hidden>
     <div class="signin-box">
-      <h1>Check your email 📩</h1>
-      <p class="subtitle">We sent a 6-digit code to <span id="verify-email">your email</span>. It expires in 10 minutes.</p>
+      <h1>Check your email</h1>
+      <p class="subtitle">We sent a 6-digit code to <span id="verify-email"></span>.</p>
       <form id="verify-form" class="form">
         <label>Code
-          <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required
-            placeholder="000000" class="code-input">
+          <input class="code-input" type="text" name="code" inputmode="numeric" pattern="[0-9]*"
+            maxlength="6" required placeholder="123456" autocomplete="one-time-code">
         </label>
         <p id="verify-error" class="error-text" hidden></p>
-        <button type="submit" class="btn-primary">Verify & sign in</button>
+        <button type="submit" class="btn-primary">Verify code</button>
       </form>
-      <button id="resend-code-btn" class="btn-secondary">Resend code</button>
-      <button id="use-different-email-btn" class="btn-secondary">Use a different email</button>
+      <button id="resend-code-btn" type="button" class="btn-secondary">Resend code</button>
+      <button id="use-different-email-btn" type="button" class="btn-secondary">Use a different email</button>
     </div>
   </section>
 
-  <!-- SCREEN: Waiting on owner approval -->
+  <!-- SCREEN: Waiting for owner approval -->
   <section id="screen-pending" class="screen screen-center" hidden>
     <div class="signin-box">
       <h1>Almost there ⏳</h1>
-      <p class="subtitle">Thanks, <span class="welcome-name">there</span>! Your access request has been sent to the app owner. You'll get an email once it's approved — no need to keep this open.</p>
+      <p class="subtitle">
+        Hi <span class="welcome-name"></span> — the owner needs to approve your access first.
+        We already emailed them; this page checks automatically every
+        few seconds and will move on the moment you're approved.
+      </p>
+      <p id="pending-notice" class="notice-text" hidden></p>
+      <p id="pending-error" class="error-text" hidden></p>
+      <button id="check-status-btn" type="button" class="btn-primary">Check now</button>
+      <button id="remind-approver-btn" type="button" class="btn-secondary">Remind approver</button>
+      <button type="button" class="btn-secondary signout-btn">Sign out</button>
     </div>
   </section>
 
   <!-- SCREEN: Rejected -->
   <section id="screen-rejected" class="screen screen-center" hidden>
     <div class="signin-box">
-      <h1>Not approved</h1>
-      <p class="subtitle">Your access request wasn't approved. Contact the app owner if you think this is a mistake.</p>
+      <h1>Access not approved</h1>
+      <p class="subtitle">The owner didn't approve this email for access. If you think that's a mistake, reach out to them directly.</p>
+      <button type="button" class="btn-secondary signout-btn">Try a different email</button>
     </div>
   </section>
 
   <!-- SCREEN: First-run profile setup -->
   <section id="screen-setup" class="screen" hidden>
     <header class="screen-header">
-      <h1>Welcome, <span class="welcome-name">there</span> 👋</h1>
+      <h1>Welcome, <span class="welcome-name"></span> 👋</h1>
       <p class="subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
     </header>
 
@@ -90,12 +112,12 @@
       </label>
 
       <div class="field-block">
-        <span class="field-label">Fitness goal(s) — pick as many as apply</span>
+        <span class="field-label">Fitness goals — pick all that apply</span>
         <div class="checkbox-grid">
           <label class="checkbox-pill"><input type="checkbox" name="goals" value="Fat loss"> Fat loss</label>
           <label class="checkbox-pill"><input type="checkbox" name="goals" value="Muscle gain"> Muscle gain</label>
           <label class="checkbox-pill"><input type="checkbox" name="goals" value="Recomposition"> Recomposition</label>
-          <label class="checkbox-pill"><input type="checkbox" name="goals" value="General fitness / maintenance"> General fitness</label>
+          <label class="checkbox-pill"><input type="checkbox" name="goals" value="General fitness / maintenance"> General fitness / maintenance</label>
           <label class="checkbox-pill"><input type="checkbox" name="goals" value="Strength"> Strength</label>
           <label class="checkbox-pill"><input type="checkbox" name="goals" value="Endurance"> Endurance</label>
         </div>
@@ -133,7 +155,7 @@
   <!-- SCREEN: Dashboard (Today) -->
   <section id="screen-dashboard" class="screen" hidden>
     <header class="screen-header">
-      <h1>Welcome back, <span class="welcome-name">there</span> 👋</h1>
+      <h1>Today</h1>
       <p class="subtitle" id="today-date"></p>
     </header>
 
@@ -157,7 +179,7 @@
     </div>
 
     <div class="notice-card">
-      <strong>Phase 1 foundation is live.</strong>
+      <strong>Welcome back, <span class="welcome-name"></span>.</strong>
       <p>Food photo logging, workout tracking, form-check videos, and the AI coach arrive in the next phases. This screen will fill in as each phase ships.</p>
     </div>
 
@@ -173,10 +195,9 @@
   <section id="screen-profile" class="screen" hidden>
     <header class="screen-header">
       <h1>Profile</h1>
-      <p class="subtitle welcome-name"></p>
     </header>
     <pre id="profile-json" class="profile-dump"></pre>
-    <button id="signout-btn" class="btn-secondary">Sign out</button>
+    <button type="button" class="btn-secondary signout-btn">Log out</button>
   </section>
 
   <!-- Bottom navigation -->
