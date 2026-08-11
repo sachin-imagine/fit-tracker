@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v6 (merged with your name-editor edits + null-safety)');
+console.info('Fit Tracker app.js — build: email-code-auth-v7 (readable profile view)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -433,11 +433,40 @@ function renderWeeklySummary_(summary) {
   el.textContent = text;
 }
 
+/**
+ * Renders the Profile screen's #profile-summary <dl> as readable
+ * label/value rows instead of a raw JSON dump. Field names match the
+ * Profile sheet headers from Config.gs's SHEET_HEADERS (Age,
+ * HeightCm, StartWeightKg, ... — see apps-script/Config.gs). "Goal"
+ * is read from either `Goal` (the actual current column name) or
+ * `Goals` (an older/alternate name), so this keeps working either
+ * way instead of silently showing "–" for goals.
+ */
 function renderProfile(profile) {
-  // Matches your current index.html's #profile-json <pre> dump.
-  const dump = el_('profile-json');
-  if (dump) {
-    dump.textContent = JSON.stringify(profile, null, 2);
+  const dl = el_('profile-summary');
+  if (dl) {
+    const rows = [
+      ['Age', profile.Age],
+      ['Height', profile.HeightCm ? `${profile.HeightCm} cm` : ''],
+      ['Current weight', profile.StartWeightKg ? `${profile.StartWeightKg} kg` : ''],
+      ['Target weight', profile.TargetWeightKg ? `${profile.TargetWeightKg} kg` : ''],
+      ['Goal', profile.Goal || profile.Goals || ''],
+      ['Training experience', profile.TrainingExperience],
+      ['Workout days/week', profile.WorkoutDaysPerWeek],
+      ['Preferred duration', profile.PreferredWorkoutDurationMin ? `${profile.PreferredWorkoutDurationMin} min` : ''],
+      ['Equipment', profile.AvailableEquipment],
+      ['Dietary preferences', profile.DietaryPreferences],
+      ['Typical schedule', profile.TypicalSchedule]
+    ];
+    dl.innerHTML = '';
+    rows.forEach(([label, value]) => {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = (value === undefined || value === null || value === '') ? '–' : value;
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    });
   }
   const statWeight = el_('stat-weight');
   if (statWeight) {
