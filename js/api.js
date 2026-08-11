@@ -13,7 +13,7 @@
  * the 30-day session actually expires.
  */
 
-console.info('Fit Tracker api.js — build: email-code-auth-v2 (sessionToken-based)');
+console.info('Fit Tracker api.js — build: email-code-auth-v3 (redirect-aware errors)');
 
 const SESSION_STORAGE_KEY = 'fitTrackerSessionToken';
 let currentSessionToken = localStorage.getItem(SESSION_STORAGE_KEY) || null;
@@ -61,15 +61,31 @@ async function apiPost(action, payload) {
 }
 
 async function parseApiResponse_(res) {
+  const text = await res.text();
   let json;
   try {
-    json = await res.json();
+    json = JSON.parse(text);
   } catch (e) {
+    // res.url reflects the FINAL URL after any redirect fetch followed.
+    // If it grew a "/u/<number>/" segment, or the body looks like an
+    // HTML account-chooser page, this is that recurring Google
+    // multi-account quirk — and it's a real functional bug (not just a
+    // cosmetic one) for POST calls specifically: a redirect on a POST
+    // request gets re-sent as a bodiless GET, which is exactly why
+    // "verifying a code" can fail while "checking status" (GET) still
+    // works. The fix lives in config.js, not in this file.
+    if (/\/u\/\d+\//.test(res.url) || /<html/i.test(text)) {
+      throw new Error(
+        'The backend redirected through a Google account-picker page instead of answering directly. ' +
+        'Open pwa/js/config.js and make sure APPS_SCRIPT_URL has no "/u/<number>/" segment in it — ' +
+        'it should look like https://script.google.com/macros/s/…/exec.'
+      );
+    }
     throw new Error('Backend returned an unreadable response (status ' + res.status + ')');
   }
   if (!json.ok) {
     const err = new Error(json.error || 'Unknown backend error');
-    err.status = json.status; // 'pending' | 'rejected' when relevant
+    err.status = json.status || null; // 'pending' | 'rejected' | 'signed_out' when relevant
     throw err;
   }
   return json.data;

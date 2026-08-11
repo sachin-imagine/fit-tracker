@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v2 (with resend cooldown)');
+console.info('Fit Tracker app.js — build: email-code-auth-v3 (seamless reload, verify spinner, pending auto-poll, reminders, logout)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -26,8 +26,14 @@ if ('serviceWorker' in navigator) {
 const bottomNav = document.getElementById('bottom-nav');
 let currentUser = null; // { email, name, status }
 let pendingEmail = null; // the email a code was just sent to, while on screen-verify
+let pendingPollInterval = null;
+const PENDING_POLL_SECONDS = 15;
 
 function showScreen(id) {
+  // Any screen change other than landing on screen-pending itself
+  // stops the background poll — otherwise it would keep silently
+  // hitting the backend from screens that no longer need it.
+  if (id !== 'screen-pending') stopPendingPoll_();
   document.querySelectorAll('.screen').forEach((s) => (s.hidden = true));
   const el = document.getElementById(id);
   if (el) el.hidden = false;
@@ -38,7 +44,7 @@ function showScreen(id) {
 
 function setWelcomeName(name) {
   document.querySelectorAll('.welcome-name').forEach((el) => {
-    el.textContent = name;
+    el.textContent = name || '';
   });
 }
 
@@ -48,30 +54,72 @@ document.getElementById('bottom-nav').addEventListener('click', (e) => {
   showScreen(btn.dataset.screen);
 });
 
-document.getElementById('signout-btn').addEventListener('click', () => {
+function doSignOut_() {
+  stopPendingPoll_();
   setSessionToken(null);
   currentUser = null;
+  pendingEmail = null;
   bottomNav.hidden = true;
   showScreen('screen-signin');
+}
+
+// Every screen (profile, pending, rejected) shares one sign-out
+// button style/handler — .signout-btn, not a single id — so "log out"
+// is always reachable, not just buried on the profile tab.
+document.querySelectorAll('.signout-btn').forEach((btn) => {
+  btn.addEventListener('click', doSignOut_);
 });
 
-// --- Resend cooldown helper --------------------------------------------
+// --- Loading / retry screen ---------------------------------------------
+// Shown at startup (instead of flashing the sign-in screen) whenever we
+// already have a session token and are just confirming what it's for.
+
+function showLoading_(message) {
+  document.getElementById('loading-text').hidden = false;
+  document.getElementById('loading-text').textContent = message || 'Loading…';
+  document.getElementById('loading-spinner').hidden = false;
+  document.getElementById('loading-error').hidden = true;
+  document.getElementById('loading-retry-btn').hidden = true;
+  showScreen('screen-loading');
+}
+
+function showLoadingError_(message) {
+  document.getElementById('loading-text').hidden = true;
+  document.getElementById('loading-spinner').hidden = true;
+  document.getElementById('loading-error').hidden = false;
+  document.getElementById('loading-error').textContent = message;
+  document.getElementById('loading-retry-btn').hidden = false;
+  showScreen('screen-loading');
+}
+
+document.getElementById('loading-retry-btn').addEventListener('click', () => {
+  showLoading_('Checking your session…');
+  runAuthCheck();
+});
+
+// --- Countdown helpers ---------------------------------------------------
 
 const RESEND_COOLDOWN_SECONDS = 30;
+
+function formatMmSs_(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s < 10 ? '0' + s : s}`;
+}
 
 /**
  * Disables a button and counts down its label for `seconds`, then
  * restores it to idleLabel and re-enables it. Attached to the button
- * element itself so a second call (e.g. switching screens and back)
- * safely replaces any in-flight countdown instead of stacking two.
+ * element itself so a second call safely replaces any in-flight
+ * countdown instead of stacking two.
  */
-function startResendCooldown_(buttonEl, seconds, idleLabel) {
+function startCountdown_(buttonEl, seconds, idleLabel, renderLabel) {
   if (buttonEl._cooldownInterval) {
     clearInterval(buttonEl._cooldownInterval);
   }
   let remaining = seconds;
   buttonEl.disabled = true;
-  buttonEl.textContent = `Resend in ${remaining}s`;
+  buttonEl.textContent = renderLabel(remaining);
   buttonEl._cooldownInterval = setInterval(() => {
     remaining -= 1;
     if (remaining <= 0) {
@@ -80,9 +128,17 @@ function startResendCooldown_(buttonEl, seconds, idleLabel) {
       buttonEl.disabled = false;
       buttonEl.textContent = idleLabel;
     } else {
-      buttonEl.textContent = `Resend in ${remaining}s`;
+      buttonEl.textContent = renderLabel(remaining);
     }
   }, 1000);
+}
+
+function startResendCooldown_(buttonEl, seconds, idleLabel) {
+  startCountdown_(buttonEl, seconds, idleLabel, (r) => `Resend in ${r}s`);
+}
+
+function startReminderCooldown_(buttonEl, seconds, idleLabel) {
+  startCountdown_(buttonEl, seconds, idleLabel, (r) => `Remind in ${formatMmSs_(r)}`);
 }
 
 function resetCooldown_(buttonEl, idleLabel) {
@@ -94,7 +150,7 @@ function resetCooldown_(buttonEl, idleLabel) {
   buttonEl.textContent = idleLabel;
 }
 
-// --- Sign-in: request code -------------------------------------------
+// --- Sign-in: request code ----------------------------------------------
 
 document.getElementById('signin-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -123,9 +179,6 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
-    // If the backend itself is enforcing the cooldown (e.g. a stray
-    // double-submit got through), reflect that countdown instead of
-    // just re-enabling immediately and inviting another failed click.
     if (/wait/i.test(err.message)) {
       startResendCooldown_(submitBtn, RESEND_COOLDOWN_SECONDS, 'Send code');
     } else {
@@ -134,21 +187,33 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
   }
 });
 
-// --- Sign-in: verify code ---------------------------------------------
+// --- Sign-in: verify code -------------------------------------------------
 
 document.getElementById('verify-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   const errorEl = document.getElementById('verify-error');
   errorEl.hidden = true;
+
+  if (submitBtn.disabled) return; // already verifying — ignore double-clicks/double Enter
+
   const code = new FormData(e.target).get('code').trim();
+  const idleLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Verifying...';
 
   try {
     const { sessionToken } = await apiPost('verifyLoginCode', { email: pendingEmail, code });
     setSessionToken(sessionToken);
+    // Move to a neutral loading screen rather than leaving the user
+    // staring at a disabled Verify button while authCheck runs.
+    showLoading_('Setting things up…');
     await runAuthCheck();
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
+    submitBtn.disabled = false;
+    submitBtn.textContent = idleLabel;
   }
 });
 
@@ -183,16 +248,73 @@ document.getElementById('use-different-email-btn').addEventListener('click', () 
   showScreen('screen-signin');
 });
 
-// --- Auth check / profile flow ----------------------------------------
+// --- Pending screen: auto-poll, manual check, remind approver ----------
 
-async function runAuthCheck() {
+function stopPendingPoll_() {
+  if (pendingPollInterval) {
+    clearInterval(pendingPollInterval);
+    pendingPollInterval = null;
+  }
+}
+
+function startPendingPoll_() {
+  stopPendingPoll_();
+  pendingPollInterval = setInterval(() => {
+    runAuthCheck({ silent: true });
+  }, PENDING_POLL_SECONDS * 1000);
+}
+
+document.getElementById('check-status-btn').addEventListener('click', () => {
+  runAuthCheck();
+});
+
+document.getElementById('remind-approver-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('remind-approver-btn');
+  if (btn.disabled) return;
+  const errorEl = document.getElementById('pending-error');
+  const noticeEl = document.getElementById('pending-notice');
+  errorEl.hidden = true;
+  noticeEl.hidden = true;
+  const idleLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+
+  try {
+    const result = await apiPost('requestApprovalReminder', {});
+    noticeEl.textContent = 'Reminder sent to the approver.';
+    noticeEl.hidden = false;
+    startReminderCooldown_(btn, (result && result.cooldownSeconds) || 300, idleLabel);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+    if (/wait/i.test(err.message)) {
+      // The backend enforces its own cooldown too — reflect the
+      // default window rather than leaving the button clickable to
+      // fail again immediately.
+      startReminderCooldown_(btn, 300, idleLabel);
+    } else {
+      resetCooldown_(btn, idleLabel);
+    }
+  }
+});
+
+// --- Auth check / profile flow -------------------------------------------
+
+async function runAuthCheck(opts) {
+  const silent = !!(opts && opts.silent);
   try {
     const auth = await apiGet('authCheck');
     currentUser = auth;
     setWelcomeName(auth.name);
 
+    if (auth.status === 'signed_out') {
+      setSessionToken(null);
+      showScreen('screen-signin');
+      return;
+    }
     if (auth.status === 'pending') {
       showScreen('screen-pending');
+      startPendingPoll_();
       return;
     }
     if (auth.status === 'rejected') {
@@ -202,8 +324,20 @@ async function runAuthCheck() {
     await loadProfileAndContinue();
   } catch (err) {
     console.error(err);
-    setSessionToken(null);
-    showScreen('screen-signin');
+    if (err.status === 'signed_out') {
+      setSessionToken(null);
+      showScreen('screen-signin');
+      return;
+    }
+    // A network hiccup or the "/u/N/" redirect issue shouldn't throw
+    // away a perfectly good session — that was the old behavior, and
+    // it's exactly what forced re-entering the email address after
+    // any transient failure. Show a retry screen instead, unless this
+    // was a silent background poll (in which case just try again on
+    // the next tick and leave the current screen alone).
+    if (!silent) {
+      showLoadingError_(err.message);
+    }
   }
 }
 
@@ -235,6 +369,7 @@ function renderProfile(profile) {
 
 document.getElementById('setup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   const errorEl = document.getElementById('setup-error');
   errorEl.hidden = true;
 
@@ -248,6 +383,11 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
     return;
   }
 
+  if (submitBtn.disabled) return;
+  const idleLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving...';
+
   try {
     await apiPost('saveProfile', payload);
     const { profile } = await apiGet('getProfile');
@@ -257,13 +397,18 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
   } catch (err) {
     errorEl.textContent = 'Could not save profile: ' + err.message;
     errorEl.hidden = false;
+    submitBtn.disabled = false;
+    submitBtn.textContent = idleLabel;
   }
 });
 
-// --- Startup ------------------------------------------------------------
+// --- Startup --------------------------------------------------------------
+// If we already have a session token, stay on the (already-visible by
+// default) loading screen and confirm what it's for — never flash the
+// sign-in screen first just to immediately replace it a moment later.
 
 if (getSessionToken()) {
-  showScreen('screen-signin'); // shown briefly until authCheck resolves
+  showLoading_('Signing you in…');
   runAuthCheck();
 } else {
   showScreen('screen-signin');
