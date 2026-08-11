@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v3 (seamless reload, verify spinner, pending auto-poll, reminders, logout)');
+console.info('Fit Tracker app.js — build: email-code-auth-v4 (GET-based sign-in, weekly summary, editable name)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -52,6 +52,9 @@ document.getElementById('bottom-nav').addEventListener('click', (e) => {
   const btn = e.target.closest('.nav-btn');
   if (!btn || btn.disabled) return;
   showScreen(btn.dataset.screen);
+  if (btn.dataset.screen === 'screen-profile') {
+    syncNameInput_();
+  }
 });
 
 function doSignOut_() {
@@ -165,7 +168,11 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
   submitBtn.textContent = 'Sending...';
 
   try {
-    await apiPost('requestLoginCode', { email });
+    // GET, not POST — see the note at the top of Code.gs: a redirect on
+    // a POST silently drops the body, but a redirect on a GET preserves
+    // the query string, so sign-in survives the "/u/N/" account-slot
+    // quirk regardless of which account is active in this browser.
+    await apiGet('requestLoginCode', { email });
     pendingEmail = email;
     document.getElementById('verify-email').textContent = email;
     document.getElementById('verify-form').reset();
@@ -203,7 +210,7 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
   submitBtn.textContent = 'Verifying...';
 
   try {
-    const { sessionToken } = await apiPost('verifyLoginCode', { email: pendingEmail, code });
+    const { sessionToken } = await apiGet('verifyLoginCode', { email: pendingEmail, code });
     setSessionToken(sessionToken);
     // Move to a neutral loading screen rather than leaving the user
     // staring at a disabled Verify button while authCheck runs.
@@ -226,7 +233,7 @@ document.getElementById('resend-code-btn').addEventListener('click', async () =>
   btn.textContent = 'Sending...';
 
   try {
-    await apiPost('requestLoginCode', { email: pendingEmail });
+    await apiGet('requestLoginCode', { email: pendingEmail });
     startResendCooldown_(btn, RESEND_COOLDOWN_SECONDS, 'Resend code');
   } catch (err) {
     errorEl.textContent = err.message;
@@ -280,7 +287,7 @@ document.getElementById('remind-approver-btn').addEventListener('click', async (
   btn.textContent = 'Sending...';
 
   try {
-    const result = await apiPost('requestApprovalReminder', {});
+    const result = await apiGet('requestApprovalReminder');
     noticeEl.textContent = 'Reminder sent to the approver.';
     noticeEl.hidden = false;
     startReminderCooldown_(btn, (result && result.cooldownSeconds) || 300, idleLabel);
@@ -342,15 +349,10 @@ async function runAuthCheck(opts) {
 }
 
 async function loadProfileAndContinue() {
-  document.getElementById('today-date').textContent = new Date().toLocaleDateString(undefined, {
-    weekday: 'long', month: 'short', day: 'numeric'
-  });
   try {
     const { profile } = await apiGet('getProfile');
     if (profile) {
-      renderProfile(profile);
-      bottomNav.hidden = false;
-      showScreen('screen-dashboard');
+      await enterAppShell_(profile);
     } else {
       showScreen('screen-setup');
     }
@@ -360,12 +362,120 @@ async function loadProfileAndContinue() {
   }
 }
 
+/**
+ * The one place that transitions into the dashboard once a profile
+ * exists — used both right after initial setup and on every later
+ * reload, so the bottom nav, today's date, the profile summary, and
+ * the weekly summary always get populated the same way instead of
+ * three slightly different copies of this logic drifting apart.
+ */
+async function enterAppShell_(profile) {
+  document.getElementById('today-date').textContent = new Date().toLocaleDateString(undefined, {
+    weekday: 'long', month: 'short', day: 'numeric'
+  });
+  renderProfile(profile);
+  bottomNav.hidden = false;
+  showScreen('screen-dashboard');
+
+  try {
+    const { weeklySummary } = await apiGet('getWeeklySummary');
+    renderWeeklySummary_(weeklySummary);
+  } catch (err) {
+    console.error(err);
+    // Not fatal — the rest of the dashboard is already usable.
+  }
+}
+
+function renderWeeklySummary_(summary) {
+  const el = document.getElementById('weekly-summary-body');
+  if (!summary || summary.weighInsThisWeek === 0) {
+    el.textContent = 'No weigh-ins logged this week yet.';
+    return;
+  }
+  let text = `${summary.weighInsThisWeek} weigh-in${summary.weighInsThisWeek === 1 ? '' : 's'} logged this week.`;
+  if (summary.deltaKg !== null && summary.deltaKg !== 0) {
+    const direction = summary.deltaKg < 0 ? 'down' : 'up';
+    text += ` Weight is ${direction} ${Math.abs(summary.deltaKg)} kg from the start of the week (${summary.startWeightKg} → ${summary.latestWeightKg} kg).`;
+  } else if (summary.deltaKg === 0) {
+    text += ` Weight is steady at ${summary.latestWeightKg} kg.`;
+  }
+  el.textContent = text;
+}
+
 function renderProfile(profile) {
-  document.getElementById('profile-json').textContent = JSON.stringify(profile, null, 2);
+  const rows = [
+    ['Age', profile.Age],
+    ['Height', profile.HeightCm ? `${profile.HeightCm} cm` : '–'],
+    ['Current weight', profile.StartWeightKg ? `${profile.StartWeightKg} kg` : '–'],
+    ['Target weight', profile.TargetWeightKg ? `${profile.TargetWeightKg} kg` : '–'],
+    ['Goals', profile.Goals || '–'],
+    ['Training experience', profile.TrainingExperience || '–'],
+    ['Workout days/week', profile.WorkoutDaysPerWeek || '–'],
+    ['Preferred duration', profile.PreferredWorkoutDurationMin ? `${profile.PreferredWorkoutDurationMin} min` : '–'],
+    ['Equipment', profile.AvailableEquipment || '–'],
+    ['Dietary preferences', profile.DietaryPreferences || '–'],
+    ['Typical schedule', profile.TypicalSchedule || '–']
+  ];
+  const dl = document.getElementById('profile-summary');
+  dl.innerHTML = '';
+  rows.forEach(([label, value]) => {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  });
+
   document.getElementById('stat-weight').textContent = profile.StartWeightKg
     ? `${profile.StartWeightKg} kg`
     : '–';
 }
+
+// --- Editable display name (Profile screen) ------------------------------
+// The name shown around the app defaults to a guess derived from the
+// email address, which can look odd for emails that aren't a clean
+// firstname.lastname pattern — this lets someone override it.
+
+function syncNameInput_() {
+  const input = document.getElementById('edit-name-input');
+  if (currentUser && currentUser.name) {
+    input.value = currentUser.name;
+  }
+}
+
+document.getElementById('save-name-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('save-name-btn');
+  const input = document.getElementById('edit-name-input');
+  const errorEl = document.getElementById('name-error');
+  const savedEl = document.getElementById('name-saved');
+  errorEl.hidden = true;
+  savedEl.hidden = true;
+
+  const name = input.value.trim();
+  if (!name) {
+    errorEl.textContent = 'Enter a name.';
+    errorEl.hidden = false;
+    return;
+  }
+  if (btn.disabled) return;
+  const idleLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    await apiGet('updateName', { name });
+    setWelcomeName(name);
+    if (currentUser) currentUser.name = name;
+    savedEl.hidden = false;
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = idleLabel;
+  }
+});
 
 document.getElementById('setup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -391,9 +501,7 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
   try {
     await apiPost('saveProfile', payload);
     const { profile } = await apiGet('getProfile');
-    renderProfile(profile);
-    bottomNav.hidden = false;
-    showScreen('screen-dashboard');
+    await enterAppShell_(profile);
   } catch (err) {
     errorEl.textContent = 'Could not save profile: ' + err.message;
     errorEl.hidden = false;
