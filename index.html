@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Sachin Fit Tracker</title>
-
 <!-- PWA / iOS home-screen behavior -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0b1120">
@@ -12,13 +11,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FitTracker">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-
 <div id="app">
-
   <!-- SCREEN: Loading / startup — visible by default (no `hidden`) so
        there is never a flash of the sign-in screen before we know
        whether an existing session is still good. -->
@@ -30,7 +26,6 @@
       <button id="loading-retry-btn" class="btn-secondary" hidden>Retry</button>
     </div>
   </section>
-
   <!-- SCREEN: Sign in with email -->
   <section id="screen-signin" class="screen screen-center" hidden>
     <div class="signin-box">
@@ -45,7 +40,6 @@
       </form>
     </div>
   </section>
-
   <!-- SCREEN: Enter the emailed code -->
   <section id="screen-verify" class="screen screen-center" hidden>
     <div class="signin-box">
@@ -63,7 +57,6 @@
       <button id="use-different-email-btn" type="button" class="btn-secondary">Use a different email</button>
     </div>
   </section>
-
   <!-- SCREEN: Waiting for owner approval -->
   <section id="screen-pending" class="screen screen-center" hidden>
     <div class="signin-box">
@@ -80,7 +73,6 @@
       <button type="button" class="btn-secondary signout-btn">Sign out</button>
     </div>
   </section>
-
   <!-- SCREEN: Rejected -->
   <section id="screen-rejected" class="screen screen-center" hidden>
     <div class="signin-box">
@@ -89,14 +81,12 @@
       <button type="button" class="btn-secondary signout-btn">Try a different email</button>
     </div>
   </section>
-
   <!-- SCREEN: First-run profile setup -->
   <section id="screen-setup" class="screen" hidden>
     <header class="screen-header">
       <h1>Welcome, <span class="welcome-name"></span> 👋</h1>
       <p class="subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
     </header>
-
     <form id="setup-form" class="form">
       <label>Age
         <input type="number" name="age" required min="10" max="100">
@@ -110,7 +100,6 @@
       <label>Target weight (kg)
         <input type="number" step="0.1" name="targetWeightKg" required min="30" max="250">
       </label>
-
       <div class="field-block">
         <span class="field-label">Fitness goals — pick all that apply</span>
         <div class="checkbox-grid">
@@ -122,7 +111,6 @@
           <label class="checkbox-pill"><input type="checkbox" name="goals" value="Endurance"> Endurance</label>
         </div>
       </div>
-
       <label>Training experience
         <select name="trainingExperience">
           <option value="">Select one</option>
@@ -146,19 +134,16 @@
       <label>Typical daily schedule
         <textarea name="typicalSchedule" rows="2" placeholder="e.g. gym mornings 7am, desk job 9-6, dinner ~9pm"></textarea>
       </label>
-
       <p id="setup-error" class="error-text" hidden></p>
       <button type="submit" class="btn-primary">Save profile & continue</button>
     </form>
   </section>
-
   <!-- SCREEN: Dashboard (Today) -->
   <section id="screen-dashboard" class="screen" hidden>
     <header class="screen-header">
       <h1>Today</h1>
       <p class="subtitle" id="today-date"></p>
     </header>
-
     <div class="card-grid">
       <div class="stat-card">
         <span class="stat-label">Weight</span>
@@ -177,12 +162,10 @@
         <span class="stat-value" id="stat-water">– / –</span>
       </div>
     </div>
-
     <div class="notice-card">
       <strong>Welcome back, <span class="welcome-name"></span>.</strong>
       <p>Food photo logging, workout tracking, form-check videos, and the AI coach arrive in the next phases. This screen will fill in as each phase ships.</p>
     </div>
-
     <div class="quick-actions">
       <button class="quick-btn" disabled>📸<span>Add Food</span></button>
       <button class="quick-btn" disabled>🏋️<span>Log Workout</span></button>
@@ -190,7 +173,6 @@
       <button class="quick-btn" disabled>⚖️<span>Log Weight</span></button>
     </div>
   </section>
-
   <!-- SCREEN: Profile (view/edit) -->
   <section id="screen-profile" class="screen" hidden>
  <header class="screen-header">
@@ -203,10 +185,9 @@
 <span id="name-error" class="error-text" hidden></span>
 <span id="name-saved" class="success-text" hidden></span>
 </div>
- <pre id="profile-json" class="profile-dump"></pre>
+ <dl id="profile-summary" class="profile-summary"></dl>
  <button type="button" class="btn-secondary signout-btn">Log out</button>
  </section>
-
   <!-- Bottom navigation -->
   <nav class="bottom-nav" id="bottom-nav" hidden>
     <button class="nav-btn active" data-screen="screen-dashboard">
@@ -222,9 +203,7 @@
       <span>👤</span><small>Profile</small>
     </button>
   </nav>
-
 </div>
-
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>
 <script src="js/app.js"></script>
