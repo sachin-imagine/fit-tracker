@@ -1,10 +1,20 @@
 /**
  * service-worker.js
  *
- * Phase 1 keeps this intentionally minimal: cache the static app shell
- * (HTML/CSS/JS/icons) so the app opens instantly and works offline for
- * viewing, while every data call always goes to the network (never
- * cached) so you're never looking at stale calories/weight/workouts.
+ * Caches the static app shell (HTML/CSS/JS/icons) so the app opens
+ * instantly and works offline for viewing, while every data call
+ * always goes to the network (never cached) so you're never looking
+ * at stale calories/weight/workouts.
+ *
+ * Network-first for the app shell (falling back to the cached copy
+ * only if the network fetch fails): this app has been actively
+ * changing week to week, and cache-first meant a stale index.html/
+ * app.js/style.css could keep being served even after bumping
+ * CACHE_NAME, until the browser happened to fully re-check the
+ * service worker — which showed up as a real bug (an old index.html
+ * missing an element a new app.js expected). Once this app is
+ * stable/rarely-changing, cache-first is the better trade-off again —
+ * for now, correctness beats the small speed win.
  */
 
 const CACHE_NAME = 'fit-tracker-shell-v6';
@@ -45,8 +55,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App shell: cache-first, falling back to network.
+  // App shell: network-first, falling back to the cached copy only
+  // when the network request itself fails (e.g. actually offline).
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((networkResponse) => {
+        const copy = networkResponse.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return networkResponse;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
