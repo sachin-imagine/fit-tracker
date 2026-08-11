@@ -196,11 +196,13 @@
  <header class="screen-header">
  <h1>Profile</h1>
  </header>
- <div class="name-editor">
- <label for="name-input">Display name</label>
- <input id="name-input" type="text" placeholder="Your name">
- <button type="button" id="save-name-btn">Save</button>
- </div>
+<div class="name-editor">
+<label for="name-input">Display name</label>
+<input id="name-input" type="text" placeholder="Your name">
+<button type="button" id="save-name-btn">Save</button>
+<span id="name-error" class="error-text" hidden></span>
+<span id="name-saved" class="success-text" hidden></span>
+</div>
  <pre id="profile-json" class="profile-dump"></pre>
  <button type="button" class="btn-secondary signout-btn">Log out</button>
  </section>
