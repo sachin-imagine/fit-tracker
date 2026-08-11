@@ -444,8 +444,7 @@ function syncNameInput_() {
   }
 }
 
-document.getElementById('save-name-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('save-name-btn');
+document.getElementById('save-name-btn')?.addEventListener('click', async () => { ... });  const btn = document.getElementById('save-name-btn');
   const input = document.getElementById('edit-name-input');
   const errorEl = document.getElementById('name-error');
   const savedEl = document.getElementById('name-saved');
