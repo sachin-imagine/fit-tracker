@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v4 (GET-based sign-in, weekly summary, editable name)');
+console.info('Fit Tracker app.js — build: email-code-auth-v5 (fixed editable-name handler)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -76,7 +76,6 @@ document.querySelectorAll('.signout-btn').forEach((btn) => {
 // --- Loading / retry screen ---------------------------------------------
 // Shown at startup (instead of flashing the sign-in screen) whenever we
 // already have a session token and are just confirming what it's for.
-
 function showLoading_(message) {
   document.getElementById('loading-text').hidden = false;
   document.getElementById('loading-text').textContent = message || 'Loading…';
@@ -101,7 +100,6 @@ document.getElementById('loading-retry-btn').addEventListener('click', () => {
 });
 
 // --- Countdown helpers ---------------------------------------------------
-
 const RESEND_COOLDOWN_SECONDS = 30;
 
 function formatMmSs_(totalSeconds) {
@@ -154,19 +152,15 @@ function resetCooldown_(buttonEl, idleLabel) {
 }
 
 // --- Sign-in: request code ----------------------------------------------
-
 document.getElementById('signin-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const errorEl = document.getElementById('signin-error');
   errorEl.hidden = true;
-
   if (submitBtn.disabled) return; // already sending or cooling down — ignore extra clicks/Enter presses
-
   const email = new FormData(e.target).get('email').trim().toLowerCase();
   submitBtn.disabled = true;
   submitBtn.textContent = 'Sending...';
-
   try {
     // GET, not POST — see the note at the top of Code.gs: a redirect on
     // a POST silently drops the body, but a redirect on a GET preserves
@@ -195,20 +189,16 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
 });
 
 // --- Sign-in: verify code -------------------------------------------------
-
 document.getElementById('verify-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const errorEl = document.getElementById('verify-error');
   errorEl.hidden = true;
-
   if (submitBtn.disabled) return; // already verifying — ignore double-clicks/double Enter
-
   const code = new FormData(e.target).get('code').trim();
   const idleLabel = submitBtn.textContent;
   submitBtn.disabled = true;
   submitBtn.textContent = 'Verifying...';
-
   try {
     const { sessionToken } = await apiGet('verifyLoginCode', { email: pendingEmail, code });
     setSessionToken(sessionToken);
@@ -231,7 +221,6 @@ document.getElementById('resend-code-btn').addEventListener('click', async () =>
   errorEl.hidden = true;
   btn.disabled = true;
   btn.textContent = 'Sending...';
-
   try {
     await apiGet('requestLoginCode', { email: pendingEmail });
     startResendCooldown_(btn, RESEND_COOLDOWN_SECONDS, 'Resend code');
@@ -256,7 +245,6 @@ document.getElementById('use-different-email-btn').addEventListener('click', () 
 });
 
 // --- Pending screen: auto-poll, manual check, remind approver ----------
-
 function stopPendingPoll_() {
   if (pendingPollInterval) {
     clearInterval(pendingPollInterval);
@@ -285,7 +273,6 @@ document.getElementById('remind-approver-btn').addEventListener('click', async (
   const idleLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Sending...';
-
   try {
     const result = await apiGet('requestApprovalReminder');
     noticeEl.textContent = 'Reminder sent to the approver.';
@@ -306,14 +293,12 @@ document.getElementById('remind-approver-btn').addEventListener('click', async (
 });
 
 // --- Auth check / profile flow -------------------------------------------
-
 async function runAuthCheck(opts) {
   const silent = !!(opts && opts.silent);
   try {
     const auth = await apiGet('authCheck');
     currentUser = auth;
     setWelcomeName(auth.name);
-
     if (auth.status === 'signed_out') {
       setSessionToken(null);
       showScreen('screen-signin');
@@ -376,7 +361,6 @@ async function enterAppShell_(profile) {
   renderProfile(profile);
   bottomNav.hidden = false;
   showScreen('screen-dashboard');
-
   try {
     const { weeklySummary } = await apiGet('getWeeklySummary');
     renderWeeklySummary_(weeklySummary);
@@ -426,7 +410,6 @@ function renderProfile(profile) {
     dl.appendChild(dt);
     dl.appendChild(dd);
   });
-
   document.getElementById('stat-weight').textContent = profile.StartWeightKg
     ? `${profile.StartWeightKg} kg`
     : '–';
@@ -436,67 +419,63 @@ function renderProfile(profile) {
 // The name shown around the app defaults to a guess derived from the
 // email address, which can look odd for emails that aren't a clean
 // firstname.lastname pattern — this lets someone override it.
-
 function syncNameInput_() {
-  const input = document.getElementById('edit-name-input');
-  if (currentUser && currentUser.name) {
+  const input = document.getElementById('name-input');
+  if (input && currentUser && currentUser.name) {
     input.value = currentUser.name;
   }
 }
 
-document.getElementById('save-name-btn')?.addEventListener('click', async () => { ... });  const btn = document.getElementById('save-name-btn');
-  const input = document.getElementById('edit-name-input');
+document.getElementById('save-name-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('save-name-btn');
+  const input = document.getElementById('name-input');
   const errorEl = document.getElementById('name-error');
   const savedEl = document.getElementById('name-saved');
-  errorEl.hidden = true;
-  savedEl.hidden = true;
+  if (errorEl) errorEl.hidden = true;
+  if (savedEl) savedEl.hidden = true;
 
-  const name = input.value.trim();
+  const name = input?.value.trim() || '';
   if (!name) {
-    errorEl.textContent = 'Enter a name.';
-    errorEl.hidden = false;
+    if (errorEl) { errorEl.textContent = 'Enter a name.'; errorEl.hidden = false; }
     return;
   }
   if (btn.disabled) return;
+
   const idleLabel = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Saving...';
-
+  btn.textContent = 'Saving…';
   try {
     await apiGet('updateName', { name });
     setWelcomeName(name);
     if (currentUser) currentUser.name = name;
-    savedEl.hidden = false;
+    if (savedEl) { savedEl.textContent = 'Saved.'; savedEl.hidden = false; }
+    renderProfile(currentUser);
   } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.hidden = false;
+    if (errorEl) { errorEl.textContent = err.message || 'Save failed.'; errorEl.hidden = false; }
   } finally {
     btn.disabled = false;
     btn.textContent = idleLabel;
   }
 });
 
+// --- Initial profile setup -----------------------------------------------
 document.getElementById('setup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const errorEl = document.getElementById('setup-error');
   errorEl.hidden = true;
-
   const form = new FormData(e.target);
   const payload = Object.fromEntries(form.entries());
   payload.goals = form.getAll('goals'); // checkboxes sharing name="goals" -> array
-
   if (payload.goals.length === 0) {
     errorEl.textContent = 'Pick at least one fitness goal.';
     errorEl.hidden = false;
     return;
   }
-
   if (submitBtn.disabled) return;
   const idleLabel = submitBtn.textContent;
   submitBtn.disabled = true;
   submitBtn.textContent = 'Saving...';
-
   try {
     await apiPost('saveProfile', payload);
     const { profile } = await apiGet('getProfile');
@@ -513,7 +492,6 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
 // If we already have a session token, stay on the (already-visible by
 // default) loading screen and confirm what it's for — never flash the
 // sign-in screen first just to immediately replace it a moment later.
-
 if (getSessionToken()) {
   showLoading_('Signing you in…');
   runAuthCheck();
