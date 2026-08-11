@@ -193,12 +193,17 @@
 
   <!-- SCREEN: Profile (view/edit) -->
   <section id="screen-profile" class="screen" hidden>
-    <header class="screen-header">
-      <h1>Profile</h1>
-    </header>
-    <pre id="profile-json" class="profile-dump"></pre>
-    <button type="button" class="btn-secondary signout-btn">Log out</button>
-  </section>
+ <header class="screen-header">
+ <h1>Profile</h1>
+ </header>
+ <div class="name-editor">
+ <label for="name-input">Display name</label>
+ <input id="name-input" type="text" placeholder="Your name">
+ <button type="button" id="save-name-btn">Save</button>
+ </div>
+ <pre id="profile-json" class="profile-dump"></pre>
+ <button type="button" class="btn-secondary signout-btn">Log out</button>
+ </section>
 
   <!-- Bottom navigation -->
   <nav class="bottom-nav" id="bottom-nav" hidden>
