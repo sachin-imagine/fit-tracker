@@ -181,6 +181,46 @@ textarea { resize: vertical; }
   color: var(--text-dim);
 }
 
+.weekly-card p { margin: 4px 0 0; }
+
+.profile-summary {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 16px 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 14px;
+}
+
+.profile-summary dt {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.profile-summary dd {
+  margin: 0;
+  font-size: 13px;
+  text-align: right;
+  word-break: break-word;
+}
+
+.edit-name-row {
+  display: flex;
+  gap: 8px;
+}
+
+.edit-name-row input {
+  flex: 1;
+}
+
+.btn-compact {
+  margin-top: 0;
+  width: auto;
+  padding: 12px 18px;
+  white-space: nowrap;
+}
+
 .bottom-nav {
   position: fixed;
   bottom: 0;
