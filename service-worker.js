@@ -17,7 +17,7 @@
  * for now, correctness beats the small speed win.
  */
 
-const CACHE_NAME = 'fit-tracker-shell-v7';
+const CACHE_NAME = 'fit-tracker-shell-v8';
 const SHELL_FILES = [
   './',
   './index.html',
