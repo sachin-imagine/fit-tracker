@@ -13,7 +13,7 @@
  * the 30-day session actually expires.
  */
 
-console.info('Fit Tracker api.js — build: email-code-auth-v4 (GET-based sign-in survives redirects)');
+console.info('Fit Tracker api.js — build: email-code-auth-v6 (more actionable redirect diagnostics)');
 
 const SESSION_STORAGE_KEY = 'fitTrackerSessionToken';
 let currentSessionToken = localStorage.getItem(SESSION_STORAGE_KEY) || null;
@@ -66,22 +66,37 @@ async function parseApiResponse_(res) {
   try {
     json = JSON.parse(text);
   } catch (e) {
-    // res.url reflects the FINAL URL after any redirect fetch followed.
-    // If it grew a "/u/<number>/" segment, or the body looks like an
-    // HTML account-chooser page, this is that recurring Google
-    // multi-account quirk — and it's a real functional bug (not just a
-    // cosmetic one) for POST calls specifically: a redirect on a POST
-    // request gets re-sent as a bodiless GET, which is exactly why
-    // "verifying a code" can fail while "checking status" (GET) still
-    // works. The fix lives in config.js, not in this file.
-    if (/\/u\/\d+\//.test(res.url) || /<html/i.test(text)) {
+    // Always log the raw response so a real diagnosis is possible from
+    // the browser console instead of guessing — a previous version of
+    // this file guessed "Google account-picker page" for ANY non-JSON
+    // response, which was misleading when the real cause was something
+    // else entirely (a transient Apps Script hiccup, a script error
+    // page, a quota message, etc.). Only claim the specific "/u/N/"
+    // account-slot redirect when the final URL (res.url, which reflects
+    // the URL AFTER any redirect fetch followed) actually shows it.
+    console.error('Non-JSON response from backend.', {
+      url: res.url, status: res.status, bodyPreview: text.slice(0, 500)
+    });
+    if (/\/u\/\d+\//.test(res.url)) {
       throw new Error(
-        'The backend redirected through a Google account-picker page instead of answering directly. ' +
-        'Open pwa/js/config.js and make sure APPS_SCRIPT_URL has no "/u/<number>/" segment in it — ' +
-        'it should look like https://script.google.com/macros/s/…/exec.'
+        'The backend redirected through a Google account-picker page ("/u/<number>/" in the final ' +
+        'URL) instead of answering directly. This can happen even with a clean config.js URL — three ' +
+        'things to check on the phone/browser where this just failed: (1) In the Apps Script editor, ' +
+        'Deploy > Manage deployments > edit the Web app deployment > confirm "Who has access" is ' +
+        'exactly "Anyone", then click Deploy again to make sure that setting is actually live (editing ' +
+        'the field alone does not apply it — you must redeploy). (2) Confirm config.js\'s URL ends in ' +
+        '"/exec", not "/dev" — a "/dev" URL is the Test-deployment link and always requires picking a ' +
+        'Google account. (3) If both of those are already correct, try this same action in a private/' +
+        'incognito tab — some mobile browsers insert an account-chooser step when multiple Google ' +
+        'accounts are signed in, even for a fully public deployment, and a private tab has none. See ' +
+        'the browser console for the full raw response.'
       );
     }
-    throw new Error('Backend returned an unreadable response (status ' + res.status + ')');
+    throw new Error(
+      'Backend returned something that was not valid JSON (status ' + res.status + '). This is usually a ' +
+      'transient Apps Script hiccup — check the browser console for the raw response, or check the ' +
+      'Executions log in the Apps Script editor for an error, then try again.'
+    );
   }
   if (!json.ok) {
     const err = new Error(json.error || 'Unknown backend error');

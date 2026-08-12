@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v9 (form-check checkpoint 2 + add-food)');
+console.info('Fit Tracker app.js — build: email-code-auth-v10 (gallery uploads, fresh-landmarker-per-attempt, config sanity check)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -622,7 +622,8 @@ const POSE_WASM_BASE_ = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.
 const POSE_MODEL_URL_ =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
 
-let poseLandmarkerPromise_ = null;
+let visionFilesetPromise_ = null; // stateless module+wasm load — safe to cache across attempts
+let lastPoseLandmarker_ = null;   // the instance from the MOST RECENT attempt only — see createPoseLandmarker_
 const POSE_LOAD_TIMEOUT_MS_ = 15000; // see withTimeout_ below
 
 /**
@@ -646,26 +647,63 @@ function withTimeout_(promise, ms, message) {
 }
 
 /**
- * Lazily creates (and caches) the PoseLandmarker instance. If creation
- * fails (including timing out — see withTimeout_ above), the cached
- * promise is cleared so the NEXT attempt gets a fresh try instead of
- * being stuck on a permanently-rejected promise for the rest of the
- * session (e.g. the user's wifi comes back).
+ * Lazily loads (and caches) the MediaPipe vision module + WASM fileset.
+ * These are stateless — safe to reuse across every "Analyze form"
+ * attempt for the whole page session — unlike the PoseLandmarker
+ * instance itself (see createPoseLandmarker_ below). If loading fails
+ * (including timing out — see withTimeout_ above), the cached promise
+ * is cleared so the NEXT attempt gets a fresh try instead of being
+ * stuck on a permanently-rejected promise for the rest of the session
+ * (e.g. the user's wifi comes back).
  */
-function getPoseLandmarker_() {
-  if (!poseLandmarkerPromise_) {
-    poseLandmarkerPromise_ = withTimeout_((async () => {
+function getVisionFileset_() {
+  if (!visionFilesetPromise_) {
+    visionFilesetPromise_ = withTimeout_((async () => {
       const vision = await import(POSE_VISION_BUNDLE_URL_);
       const wasmFileset = await vision.FilesetResolver.forVisionTasks(POSE_WASM_BASE_);
-      return vision.PoseLandmarker.createFromOptions(wasmFileset, {
-        baseOptions: { modelAssetPath: POSE_MODEL_URL_ },
-        runningMode: 'VIDEO',
-        numPoses: 1
-      });
-    })(), POSE_LOAD_TIMEOUT_MS_, 'Loading the pose-tracking model took too long (check your connection).');
-    poseLandmarkerPromise_.catch(() => { poseLandmarkerPromise_ = null; });
+      return { vision, wasmFileset };
+    })(), POSE_LOAD_TIMEOUT_MS_, 'Loading the pose-tracking runtime took too long (check your connection).');
+    visionFilesetPromise_.catch(() => { visionFilesetPromise_ = null; });
   }
-  return poseLandmarkerPromise_;
+  return visionFilesetPromise_;
+}
+
+/**
+ * Creates a BRAND NEW PoseLandmarker instance for this "Analyze form"
+ * attempt, closing whatever instance the previous attempt created.
+ *
+ * Root cause of a real bug hit on-device (not a hypothetical): an
+ * earlier version of this file cached a SINGLE PoseLandmarker instance
+ * (poseLandmarkerPromise_) and reused it across every separate
+ * analysis attempt, while runPoseAnalysis_ below restarts its own `t`
+ * timestamp counter at 0 for every video it processes. MediaPipe's
+ * VIDEO-mode PoseLandmarker requires timestamps to strictly increase
+ * for the lifetime of ONE graph instance — feeding a second video's
+ * t=0 into an instance that already saw a later timestamp from a prior
+ * video throws a real `CalculatorGraph::Run()` "Packet timestamp
+ * mismatch" error deep in the WASM graph. A fresh instance per attempt
+ * has no memory of any prior timestamp, so this can't happen. The
+ * (small) cost of recreating the landmarker each time is worth the
+ * correctness guarantee; the expensive parts — the JS module and WASM
+ * fileset — stay cached via getVisionFileset_ above.
+ */
+async function createPoseLandmarker_() {
+  const { vision, wasmFileset } = await getVisionFileset_();
+  if (lastPoseLandmarker_) {
+    try { lastPoseLandmarker_.close(); } catch (e) { /* already invalid — ignore */ }
+    lastPoseLandmarker_ = null;
+  }
+  const landmarker = await withTimeout_(
+    vision.PoseLandmarker.createFromOptions(wasmFileset, {
+      baseOptions: { modelAssetPath: POSE_MODEL_URL_ },
+      runningMode: 'VIDEO',
+      numPoses: 1
+    }),
+    POSE_LOAD_TIMEOUT_MS_,
+    'Loading the pose-tracking model took too long (check your connection).'
+  );
+  lastPoseLandmarker_ = landmarker;
+  return landmarker;
 }
 
 let formCheckState_ = { exercise: null, frames: null, report: null, autoDetected: null };
@@ -767,7 +805,7 @@ function seekTo_(videoEl, timeSec) {
  * downstream (rep-analysis.js) is pure math tested separately.
  */
 async function runPoseAnalysis_(videoEl, durationSec) {
-  const landmarker = await getPoseLandmarker_();
+  const landmarker = await createPoseLandmarker_();
   const durationMs = durationSec * 1000;
   const frames = [];
   for (let t = 0; t <= durationMs; t += FORMCHECK_POSE_STEP_MS_) {
@@ -1282,12 +1320,66 @@ document.getElementById('addfood-save-btn')?.addEventListener('click', async () 
   }
 });
 
+/**
+ * Catches the single most common deploy mistake up front, before a
+ * single network call is made, instead of letting every screen fail
+ * later with api.js's generic "account-picker redirect" message. Three
+ * concrete things are checked, in order of how often they actually
+ * turn out to be the cause:
+ *  1. config.js was never edited (still the placeholder).
+ *  2. The URL has a "/u/<number>/" account-slot segment baked in —
+ *     this happens when someone copies the URL from their browser's
+ *     address bar (which can silently insert /u/0/, /u/1/, etc. when
+ *     signed into multiple Google accounts) instead of from the exact
+ *     text shown in Apps Script's Deploy > Manage deployments dialog.
+ *  3. The URL ends in "/dev" instead of "/exec" — the "Test
+ *     deployments" URL (used from the Apps Script editor's own Run/
+ *     Debug flow) always requires the developer's Google account to be
+ *     selected, which is exactly the account-picker redirect being
+ *     reported — whereas a real "/exec" Web app deployment (Deploy >
+ *     New deployment) does not, when its access is "Anyone".
+ * Returns true if the config looks usable; false (after showing a
+ * blocking, actionable error) if not.
+ */
+function validateConfig_() {
+  const url = CONFIG && CONFIG.APPS_SCRIPT_URL;
+  if (!url || url.indexOf('PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE') !== -1) {
+    showLoadingError_(
+      'pwa/js/config.js still has the placeholder APPS_SCRIPT_URL — paste in your real Apps Script ' +
+      'Web app URL (Apps Script editor > Deploy > Manage deployments) and redeploy the PWA.'
+    );
+    return false;
+  }
+  if (/\/u\/\d+\//.test(url)) {
+    showLoadingError_(
+      'config.js\'s APPS_SCRIPT_URL contains a "/u/<number>/" account-slot segment, which breaks ' +
+      'sign-in for anyone whose browser is signed into more than one Google account. Go to the Apps ' +
+      'Script editor > Deploy > Manage deployments, copy the URL exactly as shown THERE (not from ' +
+      'your browser\'s address bar), and paste that into config.js instead.'
+    );
+    return false;
+  }
+  if (/\/dev\/?$/.test(url)) {
+    showLoadingError_(
+      'config.js\'s APPS_SCRIPT_URL ends in "/dev" — that\'s the Apps Script TEST deployment URL, ' +
+      'which always requires picking your own Google account (this is very likely the exact ' +
+      '"account-picker redirect" error you\'re seeing). Use Deploy > Manage deployments (not "Test ' +
+      'deployments") to get the real Web app URL, which ends in "/exec", and confirm its "Who has ' +
+      'access" is set to "Anyone" — then paste that URL into config.js.'
+    );
+    return false;
+  }
+  return true;
+}
+
 // --- Startup --------------------------------------------------------------
 // If we already have a session token, stay on the (already-visible by
 // default) loading screen and confirm what it's for — never flash the
 // sign-in screen first just to immediately replace it a moment later.
 
-if (getSessionToken()) {
+if (!validateConfig_()) {
+  // Blocking error already shown by validateConfig_ — nothing else to do.
+} else if (getSessionToken()) {
   showLoading_('Signing you in…');
   runAuthCheck();
 } else {
