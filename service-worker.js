@@ -17,18 +17,23 @@
  * for now, correctness beats the small speed win.
  */
 
-const CACHE_NAME = 'fit-tracker-shell-v6';
+const CACHE_NAME = 'fit-tracker-shell-v7';
 const SHELL_FILES = [
   './',
   './index.html',
   './css/style.css',
   './js/config.js',
   './js/api.js',
+  './js/rep-analysis.js',
   './js/app.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
+// Deliberately NOT caching MediaPipe's CDN files here (cdn.jsdelivr.net /
+// storage.googleapis.com) — they're cross-origin and loaded on demand
+// only when Form Check is actually used. Offline support for the rest
+// of the app shell is unaffected either way.
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

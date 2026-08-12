@@ -164,14 +164,127 @@
     </div>
     <div class="notice-card">
       <strong>Welcome back, <span class="welcome-name"></span>.</strong>
-      <p>Food photo logging, workout tracking, form-check videos, and the AI coach arrive in the next phases. This screen will fill in as each phase ships.</p>
+      <p>Food photo logging, workout tracking, and the AI coach arrive in later phases. This screen will fill in as each phase ships.</p>
     </div>
     <div class="quick-actions">
-      <button class="quick-btn" disabled>📸<span>Add Food</span></button>
+      <button class="quick-btn" id="quick-addfood-btn" type="button">📸<span>Add Food</span></button>
       <button class="quick-btn" disabled>🏋️<span>Log Workout</span></button>
-      <button class="quick-btn" disabled>🎥<span>Form Check</span></button>
+      <button class="quick-btn" id="quick-formcheck-btn" type="button">🎥<span>Form Check</span></button>
       <button class="quick-btn" disabled>⚖️<span>Log Weight</span></button>
     </div>
+  </section>
+  <!-- SCREEN: Form Check (Phase 2, Slice 1 — checkpoint 2: on-device
+       MediaPipe pose tracking auto-detects reps/depth/tempo/asymmetry;
+       falls back to manual rep-count entry if pose detection can't run
+       on this device/video. See DESIGN.md section 13-14 and app.js's
+       FORMCHECK_/runPoseAnalysis_ comments. -->
+  <section id="screen-formcheck" class="screen" hidden>
+    <header class="screen-header">
+      <h1>Form Check</h1>
+      <p class="subtitle">Pick a short clip — we'll auto-detect your reps on-device (no upload of the raw video) and send your coach a few key frames. This can take up to 20-30s for a longer clip; if auto-detection isn't available on this device, we'll ask you to enter your rep count instead.</p>
+    </header>
+    <form id="formcheck-form" class="form">
+      <label>Exercise
+        <select name="exercise" id="formcheck-exercise">
+          <option value="Squat">Squat</option>
+        </select>
+      </label>
+      <label>Video clip
+        <input type="file" id="formcheck-video-input" accept="video/*" capture="environment" required>
+      </label>
+      <p id="formcheck-video-status" class="subtitle" hidden></p>
+      <p id="formcheck-fallback-notice" class="notice-text" hidden>Automatic rep detection wasn't available — enter your rep count below and try again.</p>
+      <label id="formcheck-repcount-field" hidden>How many reps did you do?
+        <input type="number" name="repCount" id="formcheck-repcount" min="1" max="50">
+      </label>
+      <p id="formcheck-error" class="error-text" hidden></p>
+      <button type="submit" class="btn-primary">Analyze form</button>
+    </form>
+    <button type="button" class="btn-secondary" id="formcheck-back-btn">Back to Today</button>
+    <!-- Filled in by app.js once analyzeForm returns; hidden until then. -->
+    <div id="formcheck-report" class="formcheck-report" hidden>
+      <div class="notice-card">
+        <strong>Score: <span id="formcheck-score"></span>/10</strong>
+        <p id="formcheck-summary"></p>
+      </div>
+      <p id="formcheck-safety" class="error-text" hidden></p>
+      <div class="field-block">
+        <span class="field-label">What's good</span>
+        <ul id="formcheck-good"></ul>
+      </div>
+      <div class="field-block">
+        <span class="field-label">Fix these</span>
+        <ul id="formcheck-corrections"></ul>
+      </div>
+      <div class="field-block" id="formcheck-recurring-block" hidden>
+        <span class="field-label">Still not fixed from last time</span>
+        <ul id="formcheck-recurring"></ul>
+      </div>
+      <p id="formcheck-save-error" class="error-text" hidden></p>
+      <p id="formcheck-save-notice" class="notice-text" hidden>Saved.</p>
+      <button type="button" class="btn-primary" id="formcheck-save-btn">Save this report</button>
+      <button type="button" class="btn-secondary" id="formcheck-discard-btn">Discard &amp; try again</button>
+    </div>
+    <!-- Off-screen — used only to decode the picked video file and
+         grab canvas frames from it; never shown, never added to the
+         page's visible layout. -->
+    <video id="formcheck-video-el" style="display:none" muted playsinline></video>
+    <canvas id="formcheck-canvas-el" style="display:none"></canvas>
+  </section>
+  <!-- SCREEN: Add Food (Phase 2, Slice 2) — photo -> Gemini proposal ->
+       user reviews/edits the estimated quantity of every item (this is
+       never auto-saved) -> confirm -> Meals.gs saves it. See DESIGN.md
+       section 15 and app.js's ADDFOOD_ comments. -->
+  <section id="screen-addfood" class="screen" hidden>
+    <header class="screen-header">
+      <h1>Add Food</h1>
+      <p class="subtitle">Take or pick a photo of your meal. Your coach will estimate each item's calories, protein, carbs, fat, and fiber — you always get to confirm or correct the portion before anything is saved.</p>
+    </header>
+    <form id="addfood-capture-form" class="form">
+      <label>Meal photo
+        <input type="file" id="addfood-photo-input" accept="image/*" capture="environment" required>
+      </label>
+      <p id="addfood-photo-status" class="subtitle" hidden></p>
+      <label>Meal type
+        <select name="mealType" id="addfood-mealtype">
+          <option value="">Not specified</option>
+          <option>Breakfast</option>
+          <option>Lunch</option>
+          <option>Dinner</option>
+          <option>Snack</option>
+        </select>
+      </label>
+      <label>Notes (optional)
+        <textarea name="notes" id="addfood-notes" rows="2" placeholder="e.g. no oil, homemade, half portion already eaten"></textarea>
+      </label>
+      <p id="addfood-error" class="error-text" hidden></p>
+      <button type="submit" class="btn-primary">Analyze photo</button>
+    </form>
+    <button type="button" class="btn-secondary" id="addfood-back-btn">Back to Today</button>
+    <!-- Filled in by app.js once analyzeFood returns; hidden until then. -->
+    <div id="addfood-review" class="formcheck-report" hidden>
+      <div class="notice-card">
+        <strong>Confidence: <span id="addfood-confidence"></span></strong>
+        <p id="addfood-coachnote"></p>
+      </div>
+      <div class="field-block">
+        <span class="field-label">Items — confirm or edit the quantity for each before saving</span>
+        <div id="addfood-items"></div>
+      </div>
+      <div class="notice-card" id="addfood-totals-card">
+        <strong>Totals</strong>
+        <p id="addfood-totals"></p>
+      </div>
+      <p id="addfood-save-error" class="error-text" hidden></p>
+      <p id="addfood-save-notice" class="notice-text" hidden>Saved.</p>
+      <button type="button" class="btn-primary" id="addfood-save-btn">Save this meal</button>
+      <button type="button" class="btn-secondary" id="addfood-discard-btn">Discard &amp; try again</button>
+    </div>
+    <!-- Off-screen — used only to decode/downscale the picked photo
+         file to base64 JPEG; never shown, never added to the page's
+         visible layout. -->
+    <img id="addfood-img-el" style="display:none">
+    <canvas id="addfood-canvas-el" style="display:none"></canvas>
   </section>
   <!-- SCREEN: Profile (view/edit) -->
   <section id="screen-profile" class="screen" hidden>
@@ -206,6 +319,7 @@
 </div>
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>
+<script src="js/rep-analysis.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
