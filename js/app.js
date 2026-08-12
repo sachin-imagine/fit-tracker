@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v10 (gallery uploads, fresh-landmarker-per-attempt, config sanity check)');
+console.info('Fit Tracker app.js — build: workout-logging-v1 (checkpoint A: manual set logging, previous-value memory, PR detection, workout history)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -52,7 +52,17 @@ function showScreen(id) {
   if (id !== 'screen-pending') stopPendingPoll_();
   document.querySelectorAll('.screen').forEach((s) => (s.hidden = true));
   const target = el_(id);
-  if (target) target.hidden = false;
+  if (target) {
+    target.hidden = false;
+    // Re-trigger the fade/slide-in animation every time, even if this
+    // screen was shown before — remove the class, force a reflow
+    // (offsetWidth read), then re-add it. Without the reflow the
+    // browser coalesces the remove+add into a no-op and the animation
+    // never restarts on a repeat visit to the same screen.
+    target.classList.remove('screen-enter');
+    void target.offsetWidth;
+    target.classList.add('screen-enter');
+  }
   document.querySelectorAll('.nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.screen === id);
   });
@@ -70,6 +80,9 @@ document.getElementById('bottom-nav').addEventListener('click', (e) => {
   showScreen(btn.dataset.screen);
   if (btn.dataset.screen === 'screen-profile') {
     syncNameInput_();
+  }
+  if (btn.dataset.screen === 'screen-log') {
+    loadWorkoutHistory_();
   }
 });
 
@@ -937,6 +950,24 @@ document.getElementById('formcheck-form')?.addEventListener('submit', async (e) 
 });
 
 function renderFormCheckReport_(report) {
+  // Surfaces a genuine mismatch loudly, above everything else — if the
+  // AI decided what was filmed doesn't match what was logged, that's
+  // more important to see first than the score, since the score/depth
+  // numbers below were computed assuming the LOGGED exercise and may
+  // not mean anything for what was actually performed.
+  const mismatchEl = el_('formcheck-mismatch');
+  if (mismatchEl) {
+    if (report.exerciseMatchesVideo === false) {
+      mismatchEl.textContent = '⚠️ This doesn\'t look like "' + (formCheckState_.exercise || 'the logged exercise') +
+        '" — it looks like: ' + (report.detectedExercise || 'a different exercise') + '. The rep count, ' +
+        'depth, and tempo numbers below were computed by pose-tracking software built for the logged ' +
+        'exercise and may not be meaningful here — the coach\'s notes below are based on what it actually saw.';
+      mismatchEl.hidden = false;
+    } else {
+      mismatchEl.hidden = true;
+    }
+  }
+
   const scoreEl = el_('formcheck-score');
   if (scoreEl) scoreEl.textContent = report.overallScore;
   const summaryEl = el_('formcheck-summary');
@@ -1217,17 +1248,47 @@ function buildAddFoodItemRow_(item, index) {
   qtyLabel.textContent = 'Quantity ×';
   const qtyInput = document.createElement('input');
   qtyInput.type = 'number';
+  qtyInput.className = 'food-item-qty-input';
   qtyInput.min = '0';
   qtyInput.step = '0.1';
   qtyInput.value = String(item.multiplier);
+
+  // Directly editable portion in grams — the multiplier above is
+  // useful for "half of this" type edits, but a user correcting the
+  // AI's ~380g guess to an actual 100g wants to type "100," not do
+  // the division themselves. Both fields stay in sync: editing either
+  // one recomputes the other (via item.estimatedGrams as the shared
+  // reference point) and both recompute macros/totals.
+  const gramsLabel = document.createElement('span');
+  gramsLabel.className = 'food-item-grams-label';
+  gramsLabel.textContent = 'Portion (g)';
+  const gramsInput = document.createElement('input');
+  gramsInput.type = 'number';
+  gramsInput.className = 'food-item-grams-input';
+  gramsInput.min = '0';
+  gramsInput.step = '1';
+  gramsInput.value = String(Math.round(item.estimatedGrams * item.multiplier));
+
   qtyInput.addEventListener('input', () => {
     const val = Number(qtyInput.value);
     item.multiplier = isNaN(val) || val < 0 ? 0 : val;
+    gramsInput.value = String(Math.round(item.estimatedGrams * item.multiplier));
     renderAddFoodItemMacros_(row, item);
     recomputeAddFoodTotals_();
   });
+  gramsInput.addEventListener('input', () => {
+    const grams = Number(gramsInput.value);
+    if (isNaN(grams) || grams < 0) return;
+    item.multiplier = item.estimatedGrams > 0 ? grams / item.estimatedGrams : 0;
+    qtyInput.value = String(round1_(item.multiplier));
+    renderAddFoodItemMacros_(row, item);
+    recomputeAddFoodTotals_();
+  });
+
   qtyRow.appendChild(qtyLabel);
   qtyRow.appendChild(qtyInput);
+  qtyRow.appendChild(gramsLabel);
+  qtyRow.appendChild(gramsInput);
   row.appendChild(qtyRow);
 
   const macrosEl = document.createElement('div');
@@ -1319,6 +1380,538 @@ document.getElementById('addfood-save-btn')?.addEventListener('click', async () 
     btn.textContent = idleLabel;
   }
 });
+
+// =====================================================================
+// Workout logging (Phase 3, Checkpoint A)
+//
+// Design mirrors the reference app the user recorded (see DESIGN.md
+// section 18): one card per exercise added this session, each with its
+// own SET / PREVIOUS / KG / REPS rows; a live Volume/Sets/Records
+// header; a rest timer chip that starts the moment a set is checked
+// off; and a gold-W / plain-number / red-X set-type badge you cycle by
+// tapping it. All the math (previous-value lookup, PR detection,
+// session totals) is server-side in Workouts.gs — this file only
+// renders what the backend returns and never invents its own numbers.
+// =====================================================================
+
+let workoutState_ = null; // null when no workout is in progress
+let exerciseLibraryCache_ = null; // fetched once per app load, refreshed after adding a custom exercise
+let workoutElapsedInterval_ = null;
+let workoutRestInterval_ = null;
+
+function freshWorkoutState_(sessionId, startedAt) {
+  return {
+    sessionId,
+    startedAt,
+    exercises: [], // { name, muscleGroup, iconEmoji, defaultRestSec, sets: [...] }
+    totals: { volumeKg: 0, sets: 0, prCount: 0 }
+  };
+}
+
+function findWorkoutExercise_(name) {
+  return workoutState_ && workoutState_.exercises.find((ex) => ex.name === name);
+}
+
+// --- Starting / resuming / discarding a session ----------------------
+
+document.getElementById('quick-workout-btn')?.addEventListener('click', async () => {
+  if (workoutState_) {
+    // Already mid-workout (e.g. navigated away to Add Food and back) —
+    // resume exactly where it was rather than silently starting a
+    // second, orphaned session.
+    renderWorkoutScreen_();
+    showScreen('screen-workout');
+    return;
+  }
+  showLoading_('Starting your workout…');
+  try {
+    const result = await apiPost('startWorkoutSession', {});
+    workoutState_ = freshWorkoutState_(result.sessionId, result.startedAt);
+    renderWorkoutScreen_();
+    showScreen('screen-workout');
+    startWorkoutElapsedTimer_();
+    openExercisePicker_(); // go straight to "add your first exercise"
+  } catch (err) {
+    showLoadingError_(err.message);
+  }
+});
+
+document.getElementById('workout-cancel-btn')?.addEventListener('click', () => {
+  stopWorkoutElapsedTimer_();
+  stopRestTimer_();
+  workoutState_ = null;
+  showScreen('screen-dashboard');
+});
+
+document.getElementById('workout-add-exercise-btn')?.addEventListener('click', () => {
+  openExercisePicker_();
+});
+
+function startWorkoutElapsedTimer_() {
+  stopWorkoutElapsedTimer_();
+  const el = el_('workout-elapsed');
+  const tick = () => {
+    if (!workoutState_ || !el) return;
+    const elapsedSec = Math.max(0, Math.round((Date.now() - new Date(workoutState_.startedAt).getTime()) / 1000));
+    const m = Math.floor(elapsedSec / 60);
+    const s = elapsedSec % 60;
+    el.textContent = `${m}:${s < 10 ? '0' + s : s} elapsed`;
+  };
+  tick();
+  workoutElapsedInterval_ = setInterval(tick, 1000);
+}
+
+function stopWorkoutElapsedTimer_() {
+  if (workoutElapsedInterval_) { clearInterval(workoutElapsedInterval_); workoutElapsedInterval_ = null; }
+}
+
+// --- Rest timer --------------------------------------------------------
+
+function startRestTimer_(seconds) {
+  stopRestTimer_();
+  const chip = el_('workout-rest-chip');
+  const remainingEl = el_('workout-rest-remaining');
+  if (!chip || !remainingEl) return;
+  let remaining = seconds;
+  chip.hidden = false;
+  remainingEl.textContent = remaining;
+  workoutRestInterval_ = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      stopRestTimer_();
+    } else {
+      remainingEl.textContent = remaining;
+    }
+  }, 1000);
+}
+
+function stopRestTimer_() {
+  if (workoutRestInterval_) { clearInterval(workoutRestInterval_); workoutRestInterval_ = null; }
+  const chip = el_('workout-rest-chip');
+  if (chip) chip.hidden = true;
+}
+
+document.getElementById('workout-rest-skip-btn')?.addEventListener('click', () => {
+  stopRestTimer_();
+});
+
+// --- Exercise picker -----------------------------------------------------
+
+async function openExercisePicker_() {
+  showScreen('screen-exercise-picker');
+  const searchInput = el_('exercise-search-input');
+  if (searchInput) searchInput.value = '';
+  const errorEl = el_('exercise-picker-error');
+  if (errorEl) errorEl.hidden = true;
+  const customNameInput = el_('exercise-custom-name');
+  if (customNameInput) customNameInput.value = '';
+
+  if (exerciseLibraryCache_) {
+    renderExercisePickerList_('');
+    return;
+  }
+  const loadingEl = el_('exercise-picker-loading');
+  const listEl = el_('exercise-picker-list');
+  if (loadingEl) loadingEl.hidden = false;
+  if (listEl) listEl.hidden = true;
+  try {
+    const result = await apiGet('getExerciseLibrary');
+    exerciseLibraryCache_ = result.exercises || [];
+    renderExercisePickerList_('');
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  } finally {
+    if (loadingEl) loadingEl.hidden = true;
+    if (listEl) listEl.hidden = false;
+  }
+}
+
+document.getElementById('exercise-picker-back-btn')?.addEventListener('click', () => {
+  showScreen('screen-workout');
+});
+
+document.getElementById('exercise-search-input')?.addEventListener('input', (e) => {
+  renderExercisePickerList_(e.target.value || '');
+});
+
+function renderExercisePickerList_(filterText) {
+  const listEl = el_('exercise-picker-list');
+  const emptyEl = el_('exercise-picker-empty');
+  if (!listEl || !exerciseLibraryCache_) return;
+  const needle = filterText.trim().toLowerCase();
+  const matches = exerciseLibraryCache_.filter((ex) => !needle || ex.name.toLowerCase().includes(needle));
+
+  listEl.innerHTML = '';
+  matches.forEach((ex) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'exercise-picker-item';
+    btn.innerHTML = `
+      <span class="exercise-icon">${escapeHtml_(ex.iconEmoji || '🏋️')}</span>
+      <span class="exercise-picker-info">
+        <span class="exercise-picker-name">${escapeHtml_(ex.name)}</span>
+        <span class="exercise-picker-meta">${escapeHtml_([ex.muscleGroup, ex.equipment].filter(Boolean).join(' · '))}</span>
+      </span>
+      <span class="exercise-picker-used">${ex.timesUsed ? 'Used ' + ex.timesUsed + 'x' : ''}</span>
+    `;
+    btn.addEventListener('click', () => selectExerciseForWorkout_(ex));
+    listEl.appendChild(btn);
+  });
+  if (emptyEl) emptyEl.hidden = matches.length > 0;
+}
+
+document.getElementById('exercise-custom-add-btn')?.addEventListener('click', async () => {
+  const nameInput = el_('exercise-custom-name');
+  const errorEl = el_('exercise-picker-error');
+  if (!nameInput) return;
+  const name = nameInput.value.trim();
+  if (errorEl) errorEl.hidden = true;
+  if (!name) return;
+  try {
+    const result = await apiPost('addCustomExercise', { name });
+    exerciseLibraryCache_ = null; // stale after adding — refetch next time the picker opens
+    selectExerciseForWorkout_({
+      name: result.name, iconEmoji: '🏋️', muscleGroup: '', equipment: '', defaultRestSec: 90
+    });
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  }
+});
+
+/**
+ * Adds `ex` to the in-progress workout (if it isn't already in it —
+ * tapping an already-added exercise just returns to the workout screen
+ * instead of creating a second card for the same exercise), fetches
+ * its "previous" set data scoped to THIS session (so a set logged a
+ * minute ago in this same session never shows as its own "previous" —
+ * see Workouts.gs's handleGetPreviousSetData_), and seeds one starter
+ * set row.
+ */
+async function selectExerciseForWorkout_(ex) {
+  showScreen('screen-workout');
+  if (!workoutState_) return;
+  let exercise = findWorkoutExercise_(ex.name);
+  if (!exercise) {
+    exercise = {
+      name: ex.name,
+      muscleGroup: ex.muscleGroup || '',
+      iconEmoji: ex.iconEmoji || '🏋️',
+      defaultRestSec: ex.defaultRestSec || 90,
+      previousSets: [],
+      sets: []
+    };
+    workoutState_.exercises.push(exercise);
+    try {
+      const prev = await apiGet('getPreviousSetData', { exercise: ex.name, sessionId: workoutState_.sessionId });
+      exercise.previousSets = prev.previousSets || [];
+    } catch (err) {
+      console.warn('Could not load previous set data for ' + ex.name + ':', err.message);
+    }
+    addSetRow_(exercise);
+  }
+  renderWorkoutScreen_();
+}
+
+// --- Active workout screen ------------------------------------------------
+
+function addSetRow_(exercise) {
+  const setNumber = exercise.sets.length + 1;
+  const previous = exercise.previousSets[setNumber - 1];
+  exercise.sets.push({
+    setNumber,
+    setType: 'normal',
+    weightKg: previous ? previous.weightKg : '',
+    reps: previous ? previous.reps : '',
+    completed: false,
+    isPR: false
+  });
+}
+
+const SET_TYPE_CYCLE_ = ['normal', 'warmup', 'failed'];
+function cycleSetType_(setType) {
+  const idx = SET_TYPE_CYCLE_.indexOf(setType);
+  return SET_TYPE_CYCLE_[(idx + 1) % SET_TYPE_CYCLE_.length];
+}
+function setTypeBadgeLabel_(setType, setNumber) {
+  if (setType === 'warmup') return 'W';
+  if (setType === 'failed') return '✕';
+  return String(setNumber);
+}
+
+function recomputeLocalTotals_() {
+  const totals = { volumeKg: 0, sets: 0, prCount: 0 };
+  workoutState_.exercises.forEach((exercise) => {
+    exercise.sets.forEach((set) => {
+      if (!set.completed) return;
+      totals.volumeKg += (Number(set.weightKg) || 0) * (Number(set.reps) || 0);
+      totals.sets += 1;
+      if (set.isPR) totals.prCount += 1;
+    });
+  });
+  workoutState_.totals = totals;
+}
+
+function renderWorkoutStats_() {
+  const volEl = el_('workout-stat-volume');
+  const setsEl = el_('workout-stat-sets');
+  const prEl = el_('workout-stat-prs');
+  if (volEl) volEl.textContent = round1_(workoutState_.totals.volumeKg);
+  if (setsEl) setsEl.textContent = workoutState_.totals.sets;
+  if (prEl) prEl.textContent = workoutState_.totals.prCount;
+  // Small "bump" animation on the stat that likely just changed —
+  // reusing the same class on all three is harmless since only the
+  // ones actually re-rendered are visible to the user at that moment.
+  [volEl, setsEl, prEl].forEach((node) => {
+    if (!node) return;
+    node.classList.remove('bump');
+    void node.offsetWidth;
+    node.classList.add('bump');
+  });
+}
+
+/**
+ * Full re-render of the active workout screen from workoutState_. Kept
+ * as one function (rebuild everything) rather than fine-grained DOM
+ * patching — this app's workout sessions have at most a handful of
+ * exercises/sets, so a full re-render is cheap and far less bug-prone
+ * than hand-rolled incremental updates.
+ */
+function renderWorkoutScreen_() {
+  if (!workoutState_) return;
+  recomputeLocalTotals_();
+  renderWorkoutStats_();
+
+  const listEl = el_('workout-exercise-list');
+  const emptyEl = el_('workout-empty-notice');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+
+  if (!workoutState_.exercises.length) {
+    if (emptyEl) emptyEl.hidden = false;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+
+  workoutState_.exercises.forEach((exercise) => {
+    listEl.appendChild(renderExerciseCard_(exercise));
+  });
+}
+
+function renderExerciseCard_(exercise) {
+  const card = document.createElement('div');
+  card.className = 'exercise-card';
+
+  const header = document.createElement('div');
+  header.className = 'exercise-card-header';
+  header.innerHTML = `
+    <span class="exercise-icon">${escapeHtml_(exercise.iconEmoji)}</span>
+    <span class="exercise-name">${escapeHtml_(exercise.name)}</span>
+  `;
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'exercise-card-remove-btn';
+  removeBtn.textContent = 'Remove';
+  removeBtn.addEventListener('click', () => {
+    workoutState_.exercises = workoutState_.exercises.filter((ex) => ex !== exercise);
+    renderWorkoutScreen_();
+  });
+  header.appendChild(removeBtn);
+  card.appendChild(header);
+
+  const table = document.createElement('div');
+  table.className = 'set-table';
+  const headerRow = document.createElement('div');
+  headerRow.className = 'set-row set-row-header';
+  headerRow.innerHTML = '<span>SET</span><span>PREVIOUS</span><span>KG</span><span>REPS</span><span></span>';
+  table.appendChild(headerRow);
+
+  exercise.sets.forEach((set) => {
+    table.appendChild(renderSetRow_(exercise, set));
+    if (set.isPR) {
+      const prBadge = document.createElement('div');
+      prBadge.className = 'set-pr-badge';
+      prBadge.textContent = '🏆 New PR!';
+      table.appendChild(prBadge);
+    }
+  });
+  card.appendChild(table);
+
+  const addSetBtn = document.createElement('button');
+  addSetBtn.type = 'button';
+  addSetBtn.className = 'add-set-btn';
+  addSetBtn.textContent = '+ Add Set';
+  addSetBtn.addEventListener('click', () => {
+    addSetRow_(exercise);
+    renderWorkoutScreen_();
+  });
+  card.appendChild(addSetBtn);
+
+  return card;
+}
+
+function renderSetRow_(exercise, set) {
+  const row = document.createElement('div');
+  row.className = 'set-row' + (set.completed ? ' set-completed' : '');
+
+  const badge = document.createElement('button');
+  badge.type = 'button';
+  badge.className = 'set-number-badge' + (set.setType !== 'normal' ? ' set-type-' + set.setType : '');
+  badge.textContent = setTypeBadgeLabel_(set.setType, set.setNumber);
+  badge.title = 'Tap to cycle: normal set / warm-up / failed rep';
+  badge.addEventListener('click', () => {
+    set.setType = cycleSetType_(set.setType);
+    renderWorkoutScreen_();
+  });
+  row.appendChild(badge);
+
+  const previous = exercise.previousSets[set.setNumber - 1];
+  const prevEl = document.createElement('span');
+  prevEl.className = 'set-previous';
+  prevEl.textContent = previous ? `${previous.weightKg}kg × ${previous.reps}` : '—';
+  row.appendChild(prevEl);
+
+  const weightInput = document.createElement('input');
+  weightInput.type = 'number';
+  weightInput.inputMode = 'decimal';
+  weightInput.className = 'set-weight-input';
+  weightInput.value = set.weightKg;
+  weightInput.addEventListener('input', () => { set.weightKg = weightInput.value; });
+  row.appendChild(weightInput);
+
+  const repsInput = document.createElement('input');
+  repsInput.type = 'number';
+  repsInput.inputMode = 'numeric';
+  repsInput.className = 'set-reps-input';
+  repsInput.value = set.reps;
+  repsInput.addEventListener('input', () => { set.reps = repsInput.value; });
+  row.appendChild(repsInput);
+
+  const completeBtn = document.createElement('button');
+  completeBtn.type = 'button';
+  completeBtn.className = 'set-complete-btn';
+  completeBtn.textContent = '✓';
+  completeBtn.addEventListener('click', () => toggleSetComplete_(exercise, set));
+  row.appendChild(completeBtn);
+
+  return row;
+}
+
+/**
+ * Logs (or un-logs) a set. Always sends the full set payload — this is
+ * an upsert on the backend keyed by (session, exercise, setNumber), so
+ * re-toggling the same set updates that one row instead of creating a
+ * duplicate (see Workouts.gs's handleLogSet_/findWorkoutSetRowIndex_).
+ * Starts the rest timer only when COMPLETING a set, never on undo.
+ */
+async function toggleSetComplete_(exercise, set) {
+  const nextCompleted = !set.completed;
+  const errorEl = el_('workout-error');
+  if (errorEl) errorEl.hidden = true;
+  try {
+    const result = await apiPost('logSet', {
+      sessionId: workoutState_.sessionId,
+      exercise: exercise.name,
+      muscleGroup: exercise.muscleGroup,
+      setNumber: set.setNumber,
+      setType: set.setType,
+      weightKg: Number(set.weightKg) || 0,
+      reps: Number(set.reps) || 0,
+      completed: nextCompleted,
+      restSec: exercise.defaultRestSec
+    });
+    set.completed = nextCompleted;
+    set.isPR = nextCompleted ? !!result.isPR : false;
+    if (nextCompleted) startRestTimer_(exercise.defaultRestSec);
+    renderWorkoutScreen_();
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  }
+}
+
+// --- Finishing a workout --------------------------------------------------
+
+document.getElementById('workout-finish-btn')?.addEventListener('click', async () => {
+  if (!workoutState_) return;
+  const btn = el_('workout-finish-btn');
+  const errorEl = el_('workout-error');
+  const noticeEl = el_('workout-finish-notice');
+  if (errorEl) errorEl.hidden = true;
+  if (noticeEl) noticeEl.hidden = true;
+  const idleLabel = btn ? btn.textContent : 'Finish Workout';
+  if (btn) { btn.disabled = true; btn.textContent = 'Finishing…'; }
+
+  try {
+    const summary = await apiPost('finishWorkoutSession', { sessionId: workoutState_.sessionId });
+    stopWorkoutElapsedTimer_();
+    stopRestTimer_();
+    const mins = Math.round(summary.durationSec / 60);
+    if (noticeEl) {
+      noticeEl.hidden = false;
+      noticeEl.textContent = `Workout complete — ${mins} min, ${summary.totalVolumeKg}kg total volume, ` +
+        `${summary.totalSets} sets${summary.prCount ? `, 🏆 ${summary.prCount} new record${summary.prCount > 1 ? 's' : ''}` : ''}.`;
+    }
+    workoutState_ = null;
+    setTimeout(() => showScreen('screen-dashboard'), 1800);
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+  }
+});
+
+// --- Workout history --------------------------------------------------
+
+async function loadWorkoutHistory_() {
+  const loadingEl = el_('workout-history-loading');
+  const listEl = el_('workout-history-list');
+  const emptyEl = el_('workout-history-empty');
+  const errorEl = el_('workout-history-error');
+  if (errorEl) errorEl.hidden = true;
+  if (emptyEl) emptyEl.hidden = true;
+  if (listEl) { listEl.hidden = true; listEl.innerHTML = ''; }
+  if (loadingEl) loadingEl.hidden = false;
+
+  try {
+    const result = await apiGet('getRecentWorkoutSessions', { limit: 20 });
+    const sessions = result.sessions || [];
+    if (!sessions.length) {
+      if (emptyEl) emptyEl.hidden = false;
+    } else if (listEl) {
+      sessions.forEach((s) => listEl.appendChild(renderHistoryCard_(s)));
+      listEl.hidden = false;
+    }
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  } finally {
+    if (loadingEl) loadingEl.hidden = true;
+  }
+}
+
+function renderHistoryCard_(session) {
+  const card = document.createElement('div');
+  card.className = 'history-card';
+  const mins = Math.round((session.durationSec || 0) / 60);
+  card.innerHTML = `
+    <div class="history-card-top"><strong>${escapeHtml_(session.date)}</strong><span>${mins} min</span></div>
+    <div class="history-card-stats">
+      <span>Volume: ${session.totalVolumeKg}kg</span>
+      <span>Sets: ${session.totalSets}</span>
+      <span>🏆 ${session.prCount}</span>
+    </div>
+  `;
+  return card;
+}
+
+// Minimal HTML-escaping for exercise names/muscle groups interpolated
+// via innerHTML above — none of this data is expected to contain
+// markup (it's either from the shared Exercises sheet or typed by the
+// signed-in user themselves), but escaping costs nothing and removes
+// any doubt.
+function escapeHtml_(str) {
+  return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
 
 /**
  * Catches the single most common deploy mistake up front, before a
