@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: email-code-auth-v7 (readable profile view)');
+console.info('Fit Tracker app.js — build: email-code-auth-v9 (form-check checkpoint 2 + add-food)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -570,6 +570,715 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
     errorEl.hidden = false;
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
+  }
+});
+
+// --- Form Check (Phase 2, Slice 1 — checkpoint 2) ------------------------
+// Checkpoint 1 proved the capture screen, canvas frame extraction, the
+// analyzeForm/saveFormReport round trip, and the review UI all work on
+// a real phone, with a manually-typed rep count as a placeholder.
+// Checkpoint 2 replaces that placeholder with real on-device pose
+// tracking (MediaPipe PoseLandmarker, free, client-side, no API key):
+// a dense pass over the video estimates a knee-angle time series,
+// pure math in rep-analysis.js segments that into reps and picks a
+// small set of representative timestamps, and ONLY those timestamps
+// get turned into the JPEG stills that go to Gemini — same "never
+// upload the raw video" design as checkpoint 1, see DESIGN.md §13-14.
+//
+// IMPORTANT, disclosed honestly rather than glossed over: this
+// session's cloud sandbox cannot reach MediaPipe's CDN
+// (cdn.jsdelivr.net) or its model-hosting storage
+// (storage.googleapis.com) — both are blocked by this sandbox's
+// network egress allowlist (confirmed via direct curl tests, not
+// assumed). That means the MediaPipe API calls below are built from
+// the REAL, verified API surface (installed the actual npm package,
+// version 1.0.1, and read its vision.d.ts — see DESIGN.md §14) but
+// the actual model download + pose inference could NOT be executed or
+// tested from within this session. Everything else here (rep-analysis
+// math, the fallback path, the UI wiring) has been tested — see
+// pwa/js/test/rep-analysis.test.js and the Playwright DOM test. The
+// pose-tracking pass itself needs a real run on your phone/laptop
+// with a working internet connection before you can trust it.
+//
+// Resilience by design: if pose detection fails for ANY reason (no
+// network, an unsupported browser, a corrupt video, a genuine bug)
+// the whole feature degrades to checkpoint 1's manual rep-count entry
+// instead of hard-failing — see the catch block in the submit handler.
+
+const FORMCHECK_MAX_FRAME_EDGE_PX_ = 768; // matches Gemini's image-tiling cost breakpoint, see DESIGN.md §13
+const FORMCHECK_FALLBACK_FRACTIONS_ = [0.1, 0.5, 0.9]; // used only if pose detection fails
+const FORMCHECK_POSE_STEP_MS_ = 150; // ~6-7 samples/sec — enough for rep segmentation without being slow
+const FORMCHECK_MAX_POSE_FRAMES_ = 6; // cap on frames actually sent to Gemini (Ai.gs rejects >8)
+
+// MediaPipe Tasks Vision — verified real API/version this session
+// (see DESIGN.md §14): ESM entry point, version 1.0.1. Loaded lazily
+// via dynamic import() only when Form Check is actually used, so a
+// blocked/slow CDN never affects app startup or any other screen.
+const POSE_VISION_BUNDLE_URL_ = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+const POSE_WASM_BASE_ = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
+// Google's standard hosted lite pose model — from general MediaPipe
+// documentation knowledge, NOT independently re-verified this session
+// (the sandbox can't reach storage.googleapis.com to check it loads).
+const POSE_MODEL_URL_ =
+  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
+
+let poseLandmarkerPromise_ = null;
+const POSE_LOAD_TIMEOUT_MS_ = 15000; // see withTimeout_ below
+
+/**
+ * A hung network request (as opposed to an outright failure/rejection)
+ * would otherwise leave the user staring at "Analyzing movement…"
+ * forever with no fallback ever triggering — a genuinely bad failure
+ * mode on a flaky connection, distinct from (and worse than) a clean
+ * rejection. Every await on a promise that depends on the network
+ * (loading MediaPipe's module/wasm/model files) goes through this so
+ * a slow-but-not-dead connection still degrades to the manual
+ * fallback within a bounded time instead of hanging indefinitely.
+ */
+function withTimeout_(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+/**
+ * Lazily creates (and caches) the PoseLandmarker instance. If creation
+ * fails (including timing out — see withTimeout_ above), the cached
+ * promise is cleared so the NEXT attempt gets a fresh try instead of
+ * being stuck on a permanently-rejected promise for the rest of the
+ * session (e.g. the user's wifi comes back).
+ */
+function getPoseLandmarker_() {
+  if (!poseLandmarkerPromise_) {
+    poseLandmarkerPromise_ = withTimeout_((async () => {
+      const vision = await import(POSE_VISION_BUNDLE_URL_);
+      const wasmFileset = await vision.FilesetResolver.forVisionTasks(POSE_WASM_BASE_);
+      return vision.PoseLandmarker.createFromOptions(wasmFileset, {
+        baseOptions: { modelAssetPath: POSE_MODEL_URL_ },
+        runningMode: 'VIDEO',
+        numPoses: 1
+      });
+    })(), POSE_LOAD_TIMEOUT_MS_, 'Loading the pose-tracking model took too long (check your connection).');
+    poseLandmarkerPromise_.catch(() => { poseLandmarkerPromise_ = null; });
+  }
+  return poseLandmarkerPromise_;
+}
+
+let formCheckState_ = { exercise: null, frames: null, report: null, autoDetected: null };
+
+document.getElementById('quick-formcheck-btn')?.addEventListener('click', () => {
+  resetFormCheckScreen_();
+  showScreen('screen-formcheck');
+});
+
+document.getElementById('formcheck-back-btn')?.addEventListener('click', () => {
+  showScreen('screen-dashboard');
+});
+
+document.getElementById('formcheck-discard-btn')?.addEventListener('click', () => {
+  resetFormCheckScreen_();
+});
+
+function resetFormCheckScreen_() {
+  formCheckState_ = { exercise: null, frames: null, report: null, autoDetected: null };
+  const form = el_('formcheck-form');
+  if (form) { form.hidden = false; form.reset(); }
+  const errorEl = el_('formcheck-error');
+  if (errorEl) errorEl.hidden = true;
+  const statusEl = el_('formcheck-video-status');
+  if (statusEl) statusEl.hidden = true;
+  const fallbackNotice = el_('formcheck-fallback-notice');
+  if (fallbackNotice) fallbackNotice.hidden = true;
+  const repField = el_('formcheck-repcount-field');
+  if (repField) repField.hidden = true;
+  const reportEl = el_('formcheck-report');
+  if (reportEl) reportEl.hidden = true;
+  const saveErrorEl = el_('formcheck-save-error');
+  if (saveErrorEl) saveErrorEl.hidden = true;
+  const saveNoticeEl = el_('formcheck-save-notice');
+  if (saveNoticeEl) saveNoticeEl.hidden = true;
+  const saveBtn = el_('formcheck-save-btn');
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save this report'; }
+}
+
+document.getElementById('formcheck-video-input')?.addEventListener('change', (e) => {
+  const statusEl = el_('formcheck-video-status');
+  const file = e.target.files && e.target.files[0];
+  if (!statusEl) return;
+  if (!file) { statusEl.hidden = true; return; }
+  statusEl.hidden = false;
+  statusEl.textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB). ` +
+    'Analysis starts when you hit "Analyze form".';
+});
+
+/**
+ * Loads a picked video File into the off-screen <video> element and
+ * resolves once its metadata (duration, dimensions) is available.
+ * Caller is responsible for calling the returned cleanup() when done
+ * with the video, to release the object URL.
+ */
+function loadVideoFile_(file) {
+  return new Promise((resolve, reject) => {
+    const videoEl = el_('formcheck-video-el');
+    if (!videoEl) {
+      reject(new Error('Video element missing from the page.'));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    videoEl.onerror = () => {
+      cleanup();
+      reject(new Error('Could not read that video file — try a different clip or format.'));
+    };
+    videoEl.onloadedmetadata = () => {
+      const duration = videoEl.duration;
+      if (!duration || !isFinite(duration)) {
+        cleanup();
+        reject(new Error("Could not read the video's duration."));
+        return;
+      }
+      resolve({ videoEl, duration, cleanup });
+    };
+    videoEl.src = objectUrl;
+  });
+}
+
+function seekTo_(videoEl, timeSec) {
+  return new Promise((resolve) => {
+    const onSeeked = () => {
+      videoEl.removeEventListener('seeked', onSeeked);
+      resolve();
+    };
+    videoEl.addEventListener('seeked', onSeeked);
+    videoEl.currentTime = Math.max(0, timeSec);
+  });
+}
+
+/**
+ * Steps through the loaded video at FORMCHECK_POSE_STEP_MS_ intervals,
+ * running MediaPipe's PoseLandmarker on each sampled frame. Returns
+ * [{ t (ms), landmarks }] — only frames where a person was actually
+ * detected are included. This is the one piece that genuinely
+ * requires MediaPipe's model files to be reachable; everything
+ * downstream (rep-analysis.js) is pure math tested separately.
+ */
+async function runPoseAnalysis_(videoEl, durationSec) {
+  const landmarker = await getPoseLandmarker_();
+  const durationMs = durationSec * 1000;
+  const frames = [];
+  for (let t = 0; t <= durationMs; t += FORMCHECK_POSE_STEP_MS_) {
+    await seekTo_(videoEl, t / 1000);
+    const result = landmarker.detectForVideo(videoEl, Math.round(t));
+    const landmarks = result && result.landmarks && result.landmarks[0];
+    if (landmarks) frames.push({ t, landmarks });
+  }
+  return frames;
+}
+
+/**
+ * Seeks to each pick's timestamp and draws it onto the off-screen
+ * canvas, producing a small set of downscaled JPEG stills — shared by
+ * both the auto-detected path (pose-selected timestamps) and the
+ * manual-fallback path (fixed fractions of the duration).
+ */
+async function extractFramesAtTimestamps_(videoEl, picks) {
+  const canvasEl = el_('formcheck-canvas-el');
+  if (!canvasEl) throw new Error('Canvas element missing from the page.');
+  const ctx = canvasEl.getContext('2d');
+  const scale = Math.min(1, FORMCHECK_MAX_FRAME_EDGE_PX_ / Math.max(videoEl.videoWidth, videoEl.videoHeight));
+  canvasEl.width = Math.round(videoEl.videoWidth * scale);
+  canvasEl.height = Math.round(videoEl.videoHeight * scale);
+
+  const frames = [];
+  for (let i = 0; i < picks.length; i++) {
+    await seekTo_(videoEl, picks[i].t / 1000);
+    ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+    const dataUrl = canvasEl.toDataURL('image/jpeg', 0.8);
+    frames.push({
+      repIndex: i + 1,
+      phase: picks[i].label || 'sample',
+      base64: dataUrl.split(',')[1] // strip the "data:image/jpeg;base64," prefix
+    });
+  }
+  return frames;
+}
+
+document.getElementById('formcheck-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const errorEl = el_('formcheck-error');
+  if (errorEl) errorEl.hidden = true;
+
+  if (submitBtn.disabled) return;
+  const form = new FormData(e.target);
+  const exercise = form.get('exercise');
+  const manualRepCountRaw = form.get('repCount');
+  const manualRepCount = manualRepCountRaw ? Number(manualRepCountRaw) : null;
+  const fileInput = el_('formcheck-video-input');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+
+  if (!file) {
+    if (errorEl) { errorEl.textContent = 'Pick a video clip first.'; errorEl.hidden = false; }
+    return;
+  }
+
+  const idleLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Loading video…';
+
+  let videoEl, duration, cleanup;
+  try {
+    ({ videoEl, duration, cleanup } = await loadVideoFile_(file));
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    submitBtn.disabled = false;
+    submitBtn.textContent = idleLabel;
+    return;
+  }
+
+  let repSummary, frames, autoDetected;
+  try {
+    submitBtn.textContent = 'Analyzing movement…';
+    const poseFrames = await runPoseAnalysis_(videoEl, duration);
+    const series = RepAnalysis.smoothSeries(RepAnalysis.computeKneeAngleSeries(poseFrames), 5);
+    const segmentation = RepAnalysis.segmentReps(series);
+    if (segmentation.repCount < 1) {
+      throw new Error('No reps were detected automatically in this clip.');
+    }
+    repSummary = RepAnalysis.toRepSummary(segmentation);
+    const picks = RepAnalysis.selectRepresentativeTimestamps(segmentation, duration * 1000, FORMCHECK_MAX_POSE_FRAMES_);
+    submitBtn.textContent = 'Grabbing key frames…';
+    frames = await extractFramesAtTimestamps_(videoEl, picks);
+    autoDetected = true;
+  } catch (poseErr) {
+    console.warn('Automatic rep detection unavailable, falling back to manual entry:', poseErr);
+    if (!manualRepCount || manualRepCount < 1) {
+      cleanup();
+      const fallbackNotice = el_('formcheck-fallback-notice');
+      if (fallbackNotice) fallbackNotice.hidden = false;
+      const repField = el_('formcheck-repcount-field');
+      if (repField) repField.hidden = false;
+      if (errorEl) {
+        errorEl.textContent = 'Automatic rep detection wasn\'t available (' + poseErr.message +
+          '). Enter how many reps you did below and hit "Analyze form" again.';
+        errorEl.hidden = false;
+      }
+      submitBtn.disabled = false;
+      submitBtn.textContent = idleLabel;
+      return;
+    }
+    repSummary = { repCount: manualRepCount, avgTempoSec: null, reps: [] };
+    const phases = ['start', 'mid', 'finish'];
+    const fallbackPicks = FORMCHECK_FALLBACK_FRACTIONS_.map((f, i) => ({ t: duration * 1000 * f, label: phases[i] || 'sample' }));
+    submitBtn.textContent = 'Grabbing key frames…';
+    frames = await extractFramesAtTimestamps_(videoEl, fallbackPicks);
+    autoDetected = false;
+  }
+
+  cleanup();
+  submitBtn.textContent = 'Asking your coach…';
+
+  try {
+    const { report } = await apiPost('analyzeForm', { exercise, repSummary, frames });
+    formCheckState_ = { exercise, frames, report, autoDetected };
+    renderFormCheckReport_(report);
+    const formEl = el_('formcheck-form');
+    if (formEl) formEl.hidden = true;
+    const reportEl = el_('formcheck-report');
+    if (reportEl) reportEl.hidden = false;
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = idleLabel;
+  }
+});
+
+function renderFormCheckReport_(report) {
+  const scoreEl = el_('formcheck-score');
+  if (scoreEl) scoreEl.textContent = report.overallScore;
+  const summaryEl = el_('formcheck-summary');
+  if (summaryEl) {
+    const detectionNote = formCheckState_.autoDetected === true
+      ? ' (reps auto-detected on-device)'
+      : formCheckState_.autoDetected === false
+        ? ' (manual rep count — auto-detection wasn\'t available for this clip)'
+        : '';
+    summaryEl.textContent = (report.summary || '') + detectionNote;
+  }
+
+  const safetyEl = el_('formcheck-safety');
+  if (safetyEl) {
+    if (report.safetyFlag && report.safetyFlag.flagged) {
+      safetyEl.textContent = '⚠️ ' + (report.safetyFlag.reason || 'Possible safety concern flagged.');
+      safetyEl.hidden = false;
+    } else {
+      safetyEl.hidden = true;
+    }
+  }
+
+  fillList_('formcheck-good', report.goodPoints || [], (item) => item);
+  fillList_('formcheck-corrections', report.corrections || [], (c) =>
+    `[${c.severity}] ${c.issue} — ${c.cue}`);
+
+  const recurringBlock = el_('formcheck-recurring-block');
+  const hasRecurring = report.recurringIssues && report.recurringIssues.length > 0;
+  if (recurringBlock) recurringBlock.hidden = !hasRecurring;
+  if (hasRecurring) {
+    fillList_('formcheck-recurring', report.recurringIssues, (item) => item);
+  }
+}
+
+function fillList_(elementId, items, formatFn) {
+  const listEl = el_(elementId);
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  if (!items.length) {
+    const li = document.createElement('li');
+    li.textContent = 'None noted.';
+    listEl.appendChild(li);
+    return;
+  }
+  items.forEach((item) => {
+    const li = document.createElement('li');
+    li.textContent = formatFn(item);
+    listEl.appendChild(li);
+  });
+}
+
+document.getElementById('formcheck-save-btn')?.addEventListener('click', async () => {
+  const btn = el_('formcheck-save-btn');
+  const saveErrorEl = el_('formcheck-save-error');
+  const saveNoticeEl = el_('formcheck-save-notice');
+  if (saveErrorEl) saveErrorEl.hidden = true;
+  if (!btn || btn.disabled) return;
+  if (!formCheckState_.report) return;
+
+  const idleLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  try {
+    await apiPost('saveFormReport', {
+      exercise: formCheckState_.exercise,
+      report: formCheckState_.report,
+      frames: formCheckState_.frames
+    });
+    if (saveNoticeEl) saveNoticeEl.hidden = false;
+    btn.textContent = 'Saved';
+  } catch (err) {
+    if (saveErrorEl) { saveErrorEl.textContent = err.message; saveErrorEl.hidden = false; }
+    btn.disabled = false;
+    btn.textContent = idleLabel;
+  }
+});
+
+// --- Add Food (Phase 2, Slice 2) ------------------------------------------
+// Photo -> Gemini proposal (calories/protein/carbs/fat/fiber per item,
+// plus a blunt coach note) -> the user reviews EVERY item and can edit
+// its quantity (a multiplier on the AI's estimated portion) or remove
+// a misidentified item entirely -> only then does Save actually write
+// anything to Sheets/Drive. See DESIGN.md section 15 and Meals.gs.
+//
+// Quantities are always user-confirmed, never auto-trusted: the
+// review list defaults every item's multiplier to 1.0 (i.e. "the
+// portion as estimated from the photo") and recomputes calories/
+// protein/carbs/fat/fiber live as the multiplier changes, so what
+// gets saved is always what the user actually confirmed — not a raw
+// AI guess.
+
+const ADDFOOD_MAX_PHOTO_EDGE_PX_ = 1024; // food identification benefits from more detail than pose frames
+
+let addFoodState_ = { items: null, overallConfidence: null, coachNote: null, photoBase64: null, photoMimeType: null };
+
+document.getElementById('quick-addfood-btn')?.addEventListener('click', () => {
+  resetAddFoodScreen_();
+  showScreen('screen-addfood');
+});
+
+document.getElementById('addfood-back-btn')?.addEventListener('click', () => {
+  showScreen('screen-dashboard');
+});
+
+document.getElementById('addfood-discard-btn')?.addEventListener('click', () => {
+  resetAddFoodScreen_();
+});
+
+function resetAddFoodScreen_() {
+  addFoodState_ = { items: null, overallConfidence: null, coachNote: null, photoBase64: null, photoMimeType: null };
+  const form = el_('addfood-capture-form');
+  if (form) { form.hidden = false; form.reset(); }
+  const errorEl = el_('addfood-error');
+  if (errorEl) errorEl.hidden = true;
+  const statusEl = el_('addfood-photo-status');
+  if (statusEl) statusEl.hidden = true;
+  const reviewEl = el_('addfood-review');
+  if (reviewEl) reviewEl.hidden = true;
+  const saveErrorEl = el_('addfood-save-error');
+  if (saveErrorEl) saveErrorEl.hidden = true;
+  const saveNoticeEl = el_('addfood-save-notice');
+  if (saveNoticeEl) saveNoticeEl.hidden = true;
+  const saveBtn = el_('addfood-save-btn');
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save this meal'; }
+}
+
+document.getElementById('addfood-photo-input')?.addEventListener('change', (e) => {
+  const statusEl = el_('addfood-photo-status');
+  const file = e.target.files && e.target.files[0];
+  if (!statusEl) return;
+  if (!file) { statusEl.hidden = true; return; }
+  statusEl.hidden = false;
+  statusEl.textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB).`;
+});
+
+/**
+ * Decodes an image File via an off-screen <img>, downscales it on the
+ * off-screen canvas so the long edge is at most maxEdgePx, and
+ * returns a base64 JPEG. Mirrors the video frame-extraction approach
+ * in the Form Check feature — everything stays in the browser except
+ * the final small JPEG that gets sent onward.
+ */
+function downscaleImageFileToBase64_(file, maxEdgePx) {
+  return new Promise((resolve, reject) => {
+    const imgEl = el_('addfood-img-el');
+    const canvasEl = el_('addfood-canvas-el');
+    if (!imgEl || !canvasEl) {
+      reject(new Error('Image/canvas elements missing from the page.'));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    imgEl.onerror = () => {
+      cleanup();
+      reject(new Error('Could not read that photo — try a different file.'));
+    };
+    imgEl.onload = () => {
+      try {
+        const scale = Math.min(1, maxEdgePx / Math.max(imgEl.naturalWidth, imgEl.naturalHeight));
+        canvasEl.width = Math.round(imgEl.naturalWidth * scale);
+        canvasEl.height = Math.round(imgEl.naturalHeight * scale);
+        const ctx = canvasEl.getContext('2d');
+        ctx.drawImage(imgEl, 0, 0, canvasEl.width, canvasEl.height);
+        const dataUrl = canvasEl.toDataURL('image/jpeg', 0.85);
+        cleanup();
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+    imgEl.src = objectUrl;
+  });
+}
+
+document.getElementById('addfood-capture-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const errorEl = el_('addfood-error');
+  if (errorEl) errorEl.hidden = true;
+
+  if (submitBtn.disabled) return;
+  const form = new FormData(e.target);
+  const mealType = form.get('mealType') || '';
+  const notes = form.get('notes') || '';
+  const fileInput = el_('addfood-photo-input');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+
+  if (!file) {
+    if (errorEl) { errorEl.textContent = 'Pick or take a photo of your meal first.'; errorEl.hidden = false; }
+    return;
+  }
+
+  const idleLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Reading photo…';
+
+  try {
+    const photo = await downscaleImageFileToBase64_(file, ADDFOOD_MAX_PHOTO_EDGE_PX_);
+    submitBtn.textContent = 'Asking your coach…';
+    const { proposal } = await apiPost('analyzeFood', { photo, mealType, notes });
+
+    addFoodState_ = {
+      items: (proposal.items || []).map((item) => Object.assign({ multiplier: 1, removed: false }, item)),
+      overallConfidence: proposal.overallConfidence,
+      coachNote: proposal.coachNote,
+      mealType,
+      notes,
+      photoBase64: photo.base64,
+      photoMimeType: photo.mimeType
+    };
+    renderAddFoodReview_();
+    const formEl = el_('addfood-capture-form');
+    if (formEl) formEl.hidden = true;
+    const reviewEl = el_('addfood-review');
+    if (reviewEl) reviewEl.hidden = false;
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = idleLabel;
+  }
+});
+
+function renderAddFoodReview_() {
+  const confEl = el_('addfood-confidence');
+  if (confEl) confEl.textContent = addFoodState_.overallConfidence || '–';
+  const noteEl = el_('addfood-coachnote');
+  if (noteEl) noteEl.textContent = addFoodState_.coachNote || '';
+
+  const itemsEl = el_('addfood-items');
+  if (itemsEl) {
+    itemsEl.innerHTML = '';
+    addFoodState_.items.forEach((item, index) => {
+      itemsEl.appendChild(buildAddFoodItemRow_(item, index));
+    });
+  }
+  recomputeAddFoodTotals_();
+}
+
+/**
+ * Builds one editable row: name + AI's portion description (read-only
+ * context, not editable — the multiplier below is what the user
+ * actually adjusts), a quantity multiplier input defaulting to 1.0,
+ * a live macro line, and a Remove link for a misidentified item.
+ */
+function buildAddFoodItemRow_(item, index) {
+  const row = document.createElement('div');
+  row.className = 'food-item-row';
+  row.dataset.index = String(index);
+
+  const top = document.createElement('div');
+  top.className = 'food-item-top';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'food-item-name';
+  nameEl.textContent = item.name;
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'food-item-remove-btn';
+  removeBtn.textContent = item.removed ? 'Undo remove' : 'Not in my meal — remove';
+  removeBtn.addEventListener('click', () => {
+    item.removed = !item.removed;
+    renderAddFoodReview_();
+  });
+  top.appendChild(nameEl);
+  top.appendChild(removeBtn);
+  row.appendChild(top);
+
+  const portionEl = document.createElement('div');
+  portionEl.className = 'food-item-portion';
+  portionEl.textContent = `AI estimate: ${item.portionDescription} (~${Math.round(item.estimatedGrams)}g, ${item.confidence} confidence)`;
+  row.appendChild(portionEl);
+
+  const qtyRow = document.createElement('div');
+  qtyRow.className = 'food-item-qty-row';
+  const qtyLabel = document.createElement('span');
+  qtyLabel.textContent = 'Quantity ×';
+  const qtyInput = document.createElement('input');
+  qtyInput.type = 'number';
+  qtyInput.min = '0';
+  qtyInput.step = '0.1';
+  qtyInput.value = String(item.multiplier);
+  qtyInput.addEventListener('input', () => {
+    const val = Number(qtyInput.value);
+    item.multiplier = isNaN(val) || val < 0 ? 0 : val;
+    renderAddFoodItemMacros_(row, item);
+    recomputeAddFoodTotals_();
+  });
+  qtyRow.appendChild(qtyLabel);
+  qtyRow.appendChild(qtyInput);
+  row.appendChild(qtyRow);
+
+  const macrosEl = document.createElement('div');
+  macrosEl.className = 'food-item-macros';
+  row.appendChild(macrosEl);
+  renderAddFoodItemMacros_(row, item);
+
+  if (item.removed) row.classList.add('removed');
+  return row;
+}
+
+function renderAddFoodItemMacros_(row, item) {
+  const macrosEl = row.querySelector('.food-item-macros');
+  if (!macrosEl) return;
+  const m = item.multiplier;
+  macrosEl.textContent =
+    `${Math.round(item.calories * m)} kcal · P ${round1_(item.proteinG * m)}g · ` +
+    `C ${round1_(item.carbsG * m)}g · F ${round1_(item.fatG * m)}g · Fiber ${round1_(item.fiberG * m)}g`;
+  row.classList.toggle('removed', !!item.removed);
+}
+
+function round1_(n) {
+  return Math.round(n * 10) / 10;
+}
+
+function recomputeAddFoodTotals_() {
+  const totalsEl = el_('addfood-totals');
+  if (!totalsEl) return;
+  const active = addFoodState_.items.filter((item) => !item.removed);
+  const totals = active.reduce((acc, item) => {
+    const m = item.multiplier;
+    acc.calories += item.calories * m;
+    acc.proteinG += item.proteinG * m;
+    acc.carbsG += item.carbsG * m;
+    acc.fatG += item.fatG * m;
+    acc.fiberG += item.fiberG * m;
+    return acc;
+  }, { calories: 0, proteinG: 0, carbsG: 0, fatG: 0, fiberG: 0 });
+  totalsEl.textContent =
+    `${Math.round(totals.calories)} kcal · Protein ${round1_(totals.proteinG)}g · ` +
+    `Carbs ${round1_(totals.carbsG)}g · Fat ${round1_(totals.fatG)}g · Fiber ${round1_(totals.fiberG)}g`;
+}
+
+document.getElementById('addfood-save-btn')?.addEventListener('click', async () => {
+  const btn = el_('addfood-save-btn');
+  const saveErrorEl = el_('addfood-save-error');
+  const saveNoticeEl = el_('addfood-save-notice');
+  if (saveErrorEl) saveErrorEl.hidden = true;
+  if (!btn || btn.disabled) return;
+  if (!addFoodState_.items) return;
+
+  const activeItems = addFoodState_.items.filter((item) => !item.removed && item.multiplier > 0);
+  if (!activeItems.length) {
+    if (saveErrorEl) { saveErrorEl.textContent = 'Nothing left to save — every item was removed or set to zero quantity.'; saveErrorEl.hidden = false; }
+    return;
+  }
+
+  const idleLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  try {
+    const items = activeItems.map((item) => ({
+      name: item.name,
+      portionDescription: item.portionDescription,
+      quantityMultiplier: item.multiplier,
+      estimatedGrams: round1_(item.estimatedGrams * item.multiplier),
+      calories: round1_(item.calories * item.multiplier),
+      proteinG: round1_(item.proteinG * item.multiplier),
+      carbsG: round1_(item.carbsG * item.multiplier),
+      fatG: round1_(item.fatG * item.multiplier),
+      fiberG: round1_(item.fiberG * item.multiplier),
+      confidence: item.confidence
+    }));
+
+    await apiPost('saveMeal', {
+      mealType: addFoodState_.mealType,
+      notes: addFoodState_.notes,
+      photo: addFoodState_.photoBase64 ? { base64: addFoodState_.photoBase64, mimeType: addFoodState_.photoMimeType } : null,
+      items,
+      overallConfidence: addFoodState_.overallConfidence,
+      coachNote: addFoodState_.coachNote
+    });
+    if (saveNoticeEl) saveNoticeEl.hidden = false;
+    btn.textContent = 'Saved';
+  } catch (err) {
+    if (saveErrorEl) { saveErrorEl.textContent = err.message; saveErrorEl.hidden = false; }
+    btn.disabled = false;
+    btn.textContent = idleLabel;
   }
 });
 
