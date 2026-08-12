@@ -468,6 +468,7 @@ textarea { resize: vertical; }
 
 .food-item-qty-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 13px;
@@ -477,6 +478,10 @@ textarea { resize: vertical; }
 .food-item-qty-row input {
   width: 72px;
   padding: 8px 10px;
+}
+
+.food-item-grams-label {
+  margin-left: 8px;
 }
 
 .food-item-macros {
@@ -498,4 +503,333 @@ textarea { resize: vertical; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* --- Screen-change animation ---------------------------------------
+   Every showScreen() call adds this class to the newly-visible
+   section (see app.js) — a small fade+slide so moving between the
+   dashboard/exercise-picker/active-workout/history screens feels like
+   deliberate navigation instead of an instant, jarring swap. Kept
+   short (0.22s) so it never feels like it's in the way on a screen
+   the user will look at for a while (mid-set, e.g.). */
+@keyframes screenEnter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.screen-enter { animation: screenEnter 0.22s ease-out; }
+
+/* --- Exercise-icon loading indicator --------------------------------
+   Used anywhere the workout feature is waiting on the backend
+   (exercise library fetch, session start, history fetch) instead of
+   the generic plain spinner — a bouncing barbell reads as "this is a
+   workout tracker" even during a loading state, per the user's
+   request for exercise icons specifically on loading windows. */
+.exercise-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.exercise-loading-icon {
+  font-size: 34px;
+  animation: exerciseBounce 0.9s ease-in-out infinite;
+}
+
+@keyframes exerciseBounce {
+  0%, 100% { transform: translateY(0) rotate(-8deg); }
+  50% { transform: translateY(-10px) rotate(8deg); }
+}
+
+/* --- Active Workout screen ------------------------------------------ */
+.workout-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.workout-stat {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.workout-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  transition: transform 0.2s ease;
+}
+
+.workout-stat-value.bump { transform: scale(1.18); color: var(--accent); }
+
+.workout-stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.rest-chip {
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 0 16px;
+  width: fit-content;
+}
+
+.rest-chip button {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workout-exercise-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.exercise-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.exercise-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.exercise-card-header .exercise-icon {
+  font-size: 22px;
+}
+
+.exercise-card-header .exercise-name {
+  font-weight: 700;
+  font-size: 15px;
+  flex: 1;
+}
+
+.exercise-card-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.set-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.set-row {
+  display: grid;
+  grid-template-columns: 34px 1fr 64px 56px 34px;
+  align-items: center;
+  gap: 8px;
+}
+
+.set-row-header {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.set-previous {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.set-weight-input, .set-reps-input {
+  padding: 8px 6px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.set-number-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.set-number-badge.set-type-warmup { background: #caa62b; color: #2b2205; }
+.set-number-badge.set-type-failed { background: var(--danger); color: #2b0505; }
+
+.set-complete-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--surface-2);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.set-row.set-completed .set-complete-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #062b13;
+}
+
+.set-row.set-completed .set-weight-input,
+.set-row.set-completed .set-reps-input {
+  border-color: var(--accent);
+}
+
+.set-pr-badge {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: #062b13;
+  background: #ffd75e;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-weight: 700;
+  width: fit-content;
+  animation: prPop 0.35s ease-out;
+}
+
+@keyframes prPop {
+  from { transform: scale(0.7); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.add-set-btn {
+  margin-top: 8px;
+  background: none;
+  border: 1px dashed var(--surface-2);
+  color: var(--text-dim);
+  border-radius: 10px;
+  padding: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+}
+
+/* --- Exercise Picker screen ------------------------------------------ */
+#exercise-search-input {
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+.exercise-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.exercise-picker-item {
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.exercise-picker-item:active { transform: scale(0.98); background: var(--surface-2); }
+
+.exercise-picker-item .exercise-icon {
+  font-size: 24px;
+}
+
+.exercise-picker-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.exercise-picker-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.exercise-picker-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.exercise-picker-used {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.exercise-picker-custom {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.exercise-picker-custom input { flex: 1; }
+
+/* --- Workout History screen ------------------------------------------ */
+.workout-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.history-card-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.history-card-top span {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 13px;
+}
+
+.history-card-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
