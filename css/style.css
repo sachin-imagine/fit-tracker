@@ -228,6 +228,64 @@ textarea { resize: vertical; }
   white-space: nowrap;
 }
 
+/* Persistent Active Workout resume pill — floats just above the
+   bottom nav, on top of whatever screen is currently showing. */
+.active-workout-pill {
+  position: fixed;
+  bottom: calc(74px + env(safe-area-inset-bottom));
+  left: 20px;
+  right: 20px;
+  max-width: 440px;
+  margin: 0 auto;
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 8px 8px 8px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  z-index: 40;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  animation: screenEnter 0.22s ease-out;
+}
+
+.active-workout-resume-btn {
+  background: none;
+  border: none;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+  text-align: left;
+  padding: 4px 0;
+}
+
+.active-workout-pill-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.active-workout-pill-time {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.active-workout-pill-discard-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--danger);
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -276,19 +334,109 @@ textarea { resize: vertical; }
   font-size: 24px;
 }
 
-/* Loading spinner shown on screen-loading while checking a session */
-.spinner {
-  width: 36px;
-  height: 36px;
-  margin: 0 auto 16px;
-  border: 3px solid var(--surface-2);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+/* Sign-in/verify/pending screens: a small animated icon, and every
+   direct "beat" of content (icon, heading, subtitle, form, buttons)
+   fades/slides in on its own staggered delay rather than the whole
+   box appearing at once — the login flow itself is unchanged, this is
+   purely about making each frame feel deliberate and alive. */
+.signin-icon {
+  font-size: 40px;
+  margin: 0 auto 14px;
+  width: fit-content;
+  animation: signinIconPop 0.5s ease-out;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@keyframes signinIconPop {
+  0% { transform: scale(0.4) rotate(-15deg); opacity: 0; }
+  70% { transform: scale(1.12) rotate(4deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); }
+}
+
+.signin-anim-item {
+  animation: signinItemIn 0.45s ease-out both;
+  animation-delay: calc(var(--signin-delay, 0) * 1ms);
+}
+
+/* nth-child (not nth-of-type) so the stagger works across a mix of
+   tags (div/h1/p/form/button) in DOM order — a plain, monotonically
+   increasing delay per position is all a stagger needs; the exact
+   value matters far less than each item lagging the one before it. */
+.signin-box > .signin-anim-item:nth-child(1) { --signin-delay: 0; }
+.signin-box > .signin-anim-item:nth-child(2) { --signin-delay: 80; }
+.signin-box > .signin-anim-item:nth-child(3) { --signin-delay: 150; }
+.signin-box > .signin-anim-item:nth-child(4) { --signin-delay: 220; }
+.signin-box > .signin-anim-item:nth-child(5) { --signin-delay: 290; }
+.signin-box > .signin-anim-item:nth-child(6) { --signin-delay: 360; }
+.signin-box > .signin-anim-item:nth-child(7) { --signin-delay: 430; }
+.signin-box > .signin-anim-item:nth-child(8) { --signin-delay: 500; }
+
+@keyframes signinItemIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* A gentle focus glow on every text input/select/textarea app-wide —
+   makes typing anywhere in the app feel a little more responsive,
+   not just on the sign-in screen. */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* A short shake the moment an error message appears — plays once on
+   the hidden->visible transition (elements animate in automatically
+   the first time they're laid out), drawing the eye without being
+   obnoxious on repeat renders of the same still-visible message. */
+.error-text:not([hidden]) {
+  animation: errorShake 0.4s ease;
+}
+
+@keyframes errorShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+.btn-secondary:active { transform: scale(0.97); }
+
+/* App-wide startup loading indicator (screen-loading) — same bouncing
+   gym-icon motif used on every other loading state in the app
+   (exercise picker, workout history — see .exercise-loading in the
+   Active Workout section below), so the very first thing a user sees
+   on open already reads as "this is a workout tracker", not a generic
+   spinner. The thin indeterminate bar underneath echoes the reference
+   app's own startup screen (a sliding highlight, not a percentage). */
+.app-loading-icon {
+  font-size: 46px;
+  margin: 0 auto 18px;
+  width: fit-content;
+  animation: exerciseBounce 0.9s ease-in-out infinite;
+}
+
+.app-loading-bar {
+  width: 160px;
+  height: 4px;
+  margin: 0 auto 16px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.app-loading-bar-fill {
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  animation: loadingBarSlide 1.1s ease-in-out infinite;
+}
+
+@keyframes loadingBarSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
 }
 
 /* Multi-select goal checkboxes */
@@ -351,30 +499,43 @@ textarea { resize: vertical; }
   font-weight: 600;
 }
 
-/* Support for the custom name-editor block in screen-profile
-   (added directly in index.html) — unstyled input/button and an
-   unstyled "Saved." message would otherwise look inconsistent with
-   the rest of the dark theme. */
+/* Profile screen — pencil-icon edit pattern (view mode: read-only text
+   + a small ✏️ button; edit mode: input(s) + Save/Cancel). Replaces an
+   earlier version that showed an editable input and a permanently-
+   visible "Save" button at all times, which read oddly for a field
+   that mostly isn't being changed right now. */
 .name-editor {
+  margin-bottom: 20px;
+}
+
+.name-editor-label {
+  display: block;
+  color: var(--text-dim);
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.name-view-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.name-edit-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
 }
 
-.name-editor label {
-  width: 100%;
-  color: var(--text-dim);
-  font-size: 14px;
-}
-
-.name-editor input {
+.name-edit-row input {
   flex: 1;
   min-width: 0;
 }
 
-.name-editor #save-name-btn {
+.name-edit-row #save-name-btn {
   background: var(--accent);
   color: #062b13;
   font-weight: 700;
@@ -385,14 +546,36 @@ textarea { resize: vertical; }
   cursor: pointer;
 }
 
-.name-editor #save-name-btn[disabled] {
+.name-edit-row #save-name-btn[disabled] {
   opacity: 0.55;
   cursor: default;
 }
 
 .name-editor .error-text,
 .name-editor .success-text {
-  width: 100%;
+  display: block;
+  margin-top: 6px;
+}
+
+/* Shared small pencil-icon button — used for both the name editor and
+   the "Edit profile" entry point above the profile-summary block. */
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+
+.icon-btn:active { background: var(--surface-2); }
+
+.profile-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
 }
 
 .success-text {
@@ -651,6 +834,19 @@ textarea { resize: vertical; }
   grid-template-columns: 34px 1fr 64px 56px 34px;
   align-items: center;
   gap: 8px;
+  padding: 4px 0 4px 8px;
+  border-left: 3px solid transparent;
+  border-radius: 6px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+/* Left-border accent on a completed set — echoes the reference app's
+   own color-coded set rows (green = done) so a completed set reads as
+   "done" at a glance down the whole card, not just via the small
+   checkmark button. */
+.set-row.set-completed {
+  border-left-color: var(--accent);
+  background: rgba(74, 222, 128, 0.06);
 }
 
 .set-row-header {
@@ -695,12 +891,22 @@ textarea { resize: vertical; }
   color: var(--text-dim);
   font-size: 14px;
   cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
+
+.set-complete-btn:active { transform: scale(0.85); }
 
 .set-row.set-completed .set-complete-btn {
   background: var(--accent);
   border-color: var(--accent);
   color: #062b13;
+  animation: setCompletePop 0.25s ease-out;
+}
+
+@keyframes setCompletePop {
+  0% { transform: scale(0.7); }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); }
 }
 
 .set-row.set-completed .set-weight-input,

@@ -20,18 +20,27 @@
        whether an existing session is still good. -->
   <section id="screen-loading" class="screen screen-center">
     <div class="signin-box">
-      <div id="loading-spinner" class="spinner"></div>
+      <!-- Same "gym icon" loading motif used everywhere else in the
+           app (exercise picker, workout history) instead of a plain
+           spinner — kept behind the #loading-spinner id app.js
+           already toggles, just restyled. -->
+      <div id="loading-spinner" class="app-loading-icon">🏋️</div>
+      <div class="app-loading-bar"><div class="app-loading-bar-fill"></div></div>
       <p id="loading-text" class="subtitle">Loading…</p>
       <p id="loading-error" class="error-text" hidden></p>
       <button id="loading-retry-btn" class="btn-secondary" hidden>Retry</button>
     </div>
   </section>
-  <!-- SCREEN: Sign in with email -->
+  <!-- SCREEN: Sign in with email — same email+one-time-code flow as
+       always; only the presentation is new (a staggered entrance for
+       each element, an animated app icon, glowing focus states —
+       see .signin-anim-item in style.css). -->
   <section id="screen-signin" class="screen screen-center" hidden>
     <div class="signin-box">
-      <h1>Sachin Fit Tracker</h1>
-      <p class="subtitle">Enter your email — we'll send you a 6-digit code, no password needed.</p>
-      <form id="signin-form" class="form">
+      <div class="signin-icon signin-anim-item">🏋️</div>
+      <h1 class="signin-anim-item">Sachin Fit Tracker</h1>
+      <p class="subtitle signin-anim-item">Enter your email — we'll send you a 6-digit code, no password needed.</p>
+      <form id="signin-form" class="form signin-anim-item">
         <label>Email
           <input type="email" name="email" required placeholder="you@example.com">
         </label>
@@ -43,9 +52,10 @@
   <!-- SCREEN: Enter the emailed code -->
   <section id="screen-verify" class="screen screen-center" hidden>
     <div class="signin-box">
-      <h1>Check your email</h1>
-      <p class="subtitle">We sent a 6-digit code to <span id="verify-email"></span>.</p>
-      <form id="verify-form" class="form">
+      <div class="signin-icon signin-anim-item">📩</div>
+      <h1 class="signin-anim-item">Check your email</h1>
+      <p class="subtitle signin-anim-item">We sent a 6-digit code to <span id="verify-email"></span>.</p>
+      <form id="verify-form" class="form signin-anim-item">
         <label>Code
           <input class="code-input" type="text" name="code" inputmode="numeric" pattern="[0-9]*"
             maxlength="6" required placeholder="123456" autocomplete="one-time-code">
@@ -53,24 +63,25 @@
         <p id="verify-error" class="error-text" hidden></p>
         <button type="submit" class="btn-primary">Verify code</button>
       </form>
-      <button id="resend-code-btn" type="button" class="btn-secondary">Resend code</button>
-      <button id="use-different-email-btn" type="button" class="btn-secondary">Use a different email</button>
+      <button id="resend-code-btn" type="button" class="btn-secondary signin-anim-item">Resend code</button>
+      <button id="use-different-email-btn" type="button" class="btn-secondary signin-anim-item">Use a different email</button>
     </div>
   </section>
   <!-- SCREEN: Waiting for owner approval -->
   <section id="screen-pending" class="screen screen-center" hidden>
     <div class="signin-box">
-      <h1>Almost there ⏳</h1>
-      <p class="subtitle">
+      <div class="signin-icon signin-anim-item">⏳</div>
+      <h1 class="signin-anim-item">Almost there</h1>
+      <p class="subtitle signin-anim-item">
         Hi <span class="welcome-name"></span> — the owner needs to approve your access first.
         We already emailed them; this page checks automatically every
         few seconds and will move on the moment you're approved.
       </p>
       <p id="pending-notice" class="notice-text" hidden></p>
       <p id="pending-error" class="error-text" hidden></p>
-      <button id="check-status-btn" type="button" class="btn-primary">Check now</button>
-      <button id="remind-approver-btn" type="button" class="btn-secondary">Remind approver</button>
-      <button type="button" class="btn-secondary signout-btn">Sign out</button>
+      <button id="check-status-btn" type="button" class="btn-primary signin-anim-item">Check now</button>
+      <button id="remind-approver-btn" type="button" class="btn-secondary signin-anim-item">Remind approver</button>
+      <button type="button" class="btn-secondary signout-btn signin-anim-item">Sign out</button>
     </div>
   </section>
   <!-- SCREEN: Rejected -->
@@ -81,11 +92,20 @@
       <button type="button" class="btn-secondary signout-btn">Try a different email</button>
     </div>
   </section>
-  <!-- SCREEN: First-run profile setup -->
+  <!-- SCREEN: First-run profile setup — ALSO reused for editing an
+       existing profile later (see app.js's openEditProfile_/
+       editProfileMode_). In edit mode: the header/subtitle swap to
+       "Edit your profile", a back button appears (id
+       setup-back-btn), the submit button reads "Save changes",
+       fields arrive pre-filled from the current profile, and saving
+       returns to the Profile screen instead of the dashboard —
+       everything else (the form, its fields, its validation) is
+       shared, unduplicated, between first-run setup and later edits. -->
   <section id="screen-setup" class="screen" hidden>
     <header class="screen-header">
-      <h1>Welcome, <span class="welcome-name"></span> 👋</h1>
-      <p class="subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
+      <button type="button" id="setup-back-btn" class="btn-secondary btn-compact" hidden>← Back</button>
+      <h1 id="setup-title">Welcome, <span class="welcome-name"></span> 👋</h1>
+      <p class="subtitle" id="setup-subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
     </header>
     <form id="setup-form" class="form">
       <label>Age
@@ -135,7 +155,7 @@
         <textarea name="typicalSchedule" rows="2" placeholder="e.g. gym mornings 7am, desk job 9-6, dinner ~9pm"></textarea>
       </label>
       <p id="setup-error" class="error-text" hidden></p>
-      <button type="submit" class="btn-primary">Save profile & continue</button>
+      <button type="submit" class="btn-primary" id="setup-submit-btn">Save profile & continue</button>
     </form>
   </section>
   <!-- SCREEN: Dashboard (Today) -->
@@ -357,21 +377,53 @@
     <p id="workout-history-empty" class="subtitle" hidden>No finished workouts yet — log one from Today.</p>
     <p id="workout-history-error" class="error-text" hidden></p>
   </section>
-  <!-- SCREEN: Profile (view/edit) -->
+  <!-- SCREEN: Profile (view/edit) — this is a fully functional personal
+       trainer app, not a static tracker: every field here can be
+       updated later as goals/schedule/equipment change, not just at
+       first-run setup. Name and the full profile block each get their
+       own pencil-icon edit affordance (view mode: read-only text + a
+       small pencil button; edit mode: input(s) + Save/Cancel) — a
+       permanently-visible "Save" button made no sense when nothing
+       was being edited yet. -->
   <section id="screen-profile" class="screen" hidden>
- <header class="screen-header">
- <h1>Profile</h1>
- </header>
-<div class="name-editor">
-<label for="name-input">Display name</label>
-<input id="name-input" type="text" placeholder="Your name">
-<button type="button" id="save-name-btn">Save</button>
-<span id="name-error" class="error-text" hidden></span>
-<span id="name-saved" class="success-text" hidden></span>
-</div>
- <dl id="profile-summary" class="profile-summary"></dl>
- <button type="button" class="btn-secondary signout-btn">Log out</button>
- </section>
+    <header class="screen-header">
+      <h1>Profile</h1>
+    </header>
+    <div class="name-editor">
+      <span class="name-editor-label">Display name</span>
+      <div class="name-view-row" id="name-view-row">
+        <span id="name-display-text">–</span>
+        <button type="button" id="edit-name-btn" class="icon-btn" aria-label="Edit name" title="Edit name">✏️</button>
+      </div>
+      <div class="name-edit-row" id="name-edit-row" hidden>
+        <input id="name-input" type="text" placeholder="Your name">
+        <button type="button" id="save-name-btn" class="btn-compact">Save</button>
+        <button type="button" id="cancel-name-btn" class="btn-secondary btn-compact">Cancel</button>
+      </div>
+      <span id="name-error" class="error-text" hidden></span>
+      <span id="name-saved" class="success-text" hidden></span>
+    </div>
+    <div class="profile-summary-header">
+      <span class="field-label">Your fitness profile</span>
+      <button type="button" id="edit-profile-btn" class="icon-btn" aria-label="Edit profile" title="Edit profile">✏️ Edit</button>
+    </div>
+    <dl id="profile-summary" class="profile-summary"></dl>
+    <button type="button" class="btn-secondary signout-btn">Log out</button>
+  </section>
+  <!-- Persistent "Active Workout" resume pill — shown above the bottom
+       nav from ANY screen while a workout is in progress and you've
+       navigated away from screen-workout (e.g. to log a meal
+       mid-session), per the reference app's own pattern of never
+       letting an in-progress workout disappear from view just because
+       you're looking at something else. Tapping it jumps back into
+       screen-workout; the ✕ discards the workout without finishing it. -->
+  <div id="active-workout-pill" class="active-workout-pill" hidden>
+    <button type="button" id="active-workout-resume-btn" class="active-workout-resume-btn">
+      <span class="active-workout-pill-label">Active Workout</span>
+      <span class="active-workout-pill-time" id="active-workout-pill-time">0:00</span>
+    </button>
+    <button type="button" id="active-workout-pill-discard-btn" class="active-workout-pill-discard-btn" aria-label="Discard workout" title="Discard workout">✕</button>
+  </div>
   <!-- Bottom navigation -->
   <nav class="bottom-nav" id="bottom-nav" hidden>
     <button class="nav-btn active" data-screen="screen-dashboard">
