@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: workout-logging-v1 (checkpoint A: manual set logging, previous-value memory, PR detection, workout history)');
+console.info('Fit Tracker app.js — build: profile-edit-and-polish-v1 (editable profile via pencil icon, persistent active-workout resume pill, sign-in/loading animation pass)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -25,6 +25,8 @@ if ('serviceWorker' in navigator) {
 
 const bottomNav = document.getElementById('bottom-nav');
 let currentUser = null; // { email, name, status }
+let currentProfile_ = null; // the last Profile row rendered — kept so Edit Profile can pre-fill from it
+let editProfileMode_ = false; // true while screen-setup is being reused to EDIT an existing profile, not create the first one
 let pendingEmail = null; // the email a code was just sent to, while on screen-verify
 let pendingPollInterval = null;
 const PENDING_POLL_SECONDS = 15;
@@ -66,6 +68,7 @@ function showScreen(id) {
   document.querySelectorAll('.nav-btn').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.screen === id);
   });
+  updateActiveWorkoutPill_(id);
 }
 
 function setWelcomeName(name) {
@@ -456,6 +459,7 @@ function renderWeeklySummary_(summary) {
  * way instead of silently showing "–" for goals.
  */
 function renderProfile(profile) {
+  currentProfile_ = profile || null;
   const dl = el_('profile-summary');
   if (dl) {
     const rows = [
@@ -490,14 +494,45 @@ function renderProfile(profile) {
 // --- Editable display name (Profile screen) ------------------------------
 // The name shown around the app defaults to a guess derived from the
 // email address, which can look odd for emails that aren't a clean
-// firstname.lastname pattern — this lets someone override it.
+// firstname.lastname pattern — this lets someone override it. Pencil-
+// icon view/edit toggle: a permanently-visible "Save" button made no
+// sense when nothing was actively being edited — now Save only exists
+// once you've tapped the pencil.
 
 function syncNameInput_() {
   const input = el_('name-input');
-  if (input && currentUser && currentUser.name) {
-    input.value = currentUser.name;
-  }
+  const displayEl = el_('name-display-text');
+  const name = (currentUser && currentUser.name) || '';
+  if (input) input.value = name;
+  if (displayEl) displayEl.textContent = name || '–';
+  showNameViewMode_();
 }
+
+function showNameViewMode_() {
+  const viewRow = el_('name-view-row');
+  const editRow = el_('name-edit-row');
+  if (viewRow) viewRow.hidden = false;
+  if (editRow) editRow.hidden = true;
+  const errorEl = el_('name-error');
+  const savedEl = el_('name-saved');
+  if (errorEl) errorEl.hidden = true;
+  if (savedEl) savedEl.hidden = true;
+}
+
+function showNameEditMode_() {
+  const viewRow = el_('name-view-row');
+  const editRow = el_('name-edit-row');
+  if (viewRow) viewRow.hidden = true;
+  if (editRow) editRow.hidden = false;
+  const input = el_('name-input');
+  if (input) { input.focus(); input.select(); }
+}
+
+document.getElementById('edit-name-btn')?.addEventListener('click', showNameEditMode_);
+
+document.getElementById('cancel-name-btn')?.addEventListener('click', () => {
+  syncNameInput_(); // resets the input back to the current saved name too
+});
 
 document.getElementById('save-name-btn')?.addEventListener('click', async () => {
   const btn = document.getElementById('save-name-btn');
@@ -521,6 +556,9 @@ document.getElementById('save-name-btn')?.addEventListener('click', async () => 
     await apiGet('updateName', { name });
     setWelcomeName(name);
     if (currentUser) currentUser.name = name;
+    const displayEl = el_('name-display-text');
+    if (displayEl) displayEl.textContent = name;
+    showNameViewMode_();
     if (savedEl) { savedEl.textContent = 'Saved.'; savedEl.hidden = false; }
     // Note: deliberately NOT calling renderProfile() here — the
     // display name lives on the Users sheet, not the Profile sheet,
@@ -535,7 +573,81 @@ document.getElementById('save-name-btn')?.addEventListener('click', async () => 
   }
 });
 
-// --- Initial profile setup -----------------------------------------------
+// --- Profile setup / edit --------------------------------------------------
+// screen-setup and #setup-form are shared between first-run setup and
+// LATER edits — this is a fully functional personal-trainer app, not a
+// one-time-configured tracker, so every profile field (goals, diet,
+// schedule, equipment...) needs to stay editable as life changes, not
+// just at signup. editProfileMode_ picks which behavior applies once
+// the form is submitted.
+
+const GOAL_CHECKBOX_VALUES_ = ['Fat loss', 'Muscle gain', 'Recomposition', 'General fitness / maintenance', 'Strength', 'Endurance'];
+
+function setSetupScreenMode_(mode) {
+  editProfileMode_ = mode === 'edit';
+  const backBtn = el_('setup-back-btn');
+  const title = el_('setup-title');
+  const subtitle = el_('setup-subtitle');
+  const submitBtn = el_('setup-submit-btn');
+  if (backBtn) backBtn.hidden = !editProfileMode_;
+  if (editProfileMode_) {
+    if (title) title.textContent = 'Edit your profile';
+    if (subtitle) subtitle.textContent = 'Update anything that\'s changed — your coach uses this to personalize every recommendation.';
+    if (submitBtn) submitBtn.textContent = 'Save changes';
+  } else {
+    if (title) title.innerHTML = 'Welcome, <span class="welcome-name"></span> 👋';
+    if (subtitle) subtitle.textContent = 'Let\'s set up your fitness profile. This runs once — you can edit it later.';
+    if (submitBtn) submitBtn.textContent = 'Save profile & continue';
+    setWelcomeName(currentUser && currentUser.name);
+  }
+}
+
+/**
+ * Pre-fills every #setup-form field from the currently-loaded profile
+ * (currentProfile_) so editing feels like editing, not re-entering
+ * everything from scratch. Goals is a comma-joined string in the
+ * sheet (see Profile.gs) — split back into the matching checkboxes.
+ */
+function populateSetupForm_(profile) {
+  const form = el_('setup-form');
+  if (!form || !profile) return;
+  const setVal = (name, value) => {
+    const field = form.elements[name];
+    if (field) field.value = (value === undefined || value === null) ? '' : value;
+  };
+  setVal('age', profile.Age);
+  setVal('heightCm', profile.HeightCm);
+  setVal('startWeightKg', profile.StartWeightKg);
+  setVal('targetWeightKg', profile.TargetWeightKg);
+  setVal('trainingExperience', profile.TrainingExperience);
+  setVal('workoutDaysPerWeek', profile.WorkoutDaysPerWeek);
+  setVal('preferredWorkoutDurationMin', profile.PreferredWorkoutDurationMin);
+  setVal('availableEquipment', profile.AvailableEquipment);
+  setVal('dietaryPreferences', profile.DietaryPreferences);
+  setVal('typicalSchedule', profile.TypicalSchedule);
+
+  const goalsStr = profile.Goal || profile.Goals || '';
+  const goalsSet = new Set(goalsStr.split(',').map((g) => g.trim()).filter(Boolean));
+  GOAL_CHECKBOX_VALUES_.forEach((value) => {
+    const checkbox = Array.from(form.elements['goals'] || []).find((el) => el.value === value);
+    if (checkbox) checkbox.checked = goalsSet.has(value);
+  });
+}
+
+function openEditProfile_() {
+  setSetupScreenMode_('edit');
+  populateSetupForm_(currentProfile_);
+  const errorEl = el_('setup-error');
+  if (errorEl) errorEl.hidden = true;
+  showScreen('screen-setup');
+}
+
+document.getElementById('edit-profile-btn')?.addEventListener('click', openEditProfile_);
+
+document.getElementById('setup-back-btn')?.addEventListener('click', () => {
+  setSetupScreenMode_('setup'); // reset chrome for next time this screen is needed fresh
+  showScreen('screen-profile');
+});
 
 document.getElementById('setup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -558,11 +670,11 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = 'Saving...';
 
-  // The save itself and "now show me the dashboard" afterward are two
-  // separate steps with two separate failure modes. Conflating them
-  // used to mean a harmless rendering hiccup right after a SUCCESSFUL
-  // save got reported to the user as "Could not save profile" — which
-  // is not just confusing, it's actively wrong and could prompt
+  // The save itself and "now show me the dashboard/profile" afterward
+  // are two separate steps with two separate failure modes.
+  // Conflating them used to mean a harmless rendering hiccup right
+  // after a SUCCESSFUL save got reported as "Could not save profile"
+  // — not just confusing, actively wrong, and could prompt
   // re-submitting a duplicate row for data that already saved fine.
   try {
     await apiPost('saveProfile', payload);
@@ -574,12 +686,21 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
     return;
   }
 
+  const wasEditing = editProfileMode_;
   try {
     const { profile } = await apiGet('getProfile');
-    await enterAppShell_(profile);
+    if (wasEditing) {
+      renderProfile(profile);
+      setSetupScreenMode_('setup'); // reset chrome before leaving edit mode
+      showScreen('screen-profile');
+      submitBtn.disabled = false;
+      submitBtn.textContent = idleLabel;
+    } else {
+      await enterAppShell_(profile);
+    }
   } catch (err) {
-    console.error('Profile saved, but loading the dashboard afterward failed:', err);
-    errorEl.textContent = 'Profile saved. Reload the app to see your dashboard — (' + err.message + ')';
+    console.error('Profile saved, but refreshing the view afterward failed:', err);
+    errorEl.textContent = 'Profile saved. Reload the app to see the update — (' + err.message + ')';
     errorEl.hidden = false;
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
@@ -1450,12 +1571,18 @@ document.getElementById('workout-add-exercise-btn')?.addEventListener('click', (
 function startWorkoutElapsedTimer_() {
   stopWorkoutElapsedTimer_();
   const el = el_('workout-elapsed');
+  const pillTimeEl = el_('active-workout-pill-time');
   const tick = () => {
-    if (!workoutState_ || !el) return;
+    if (!workoutState_) return;
     const elapsedSec = Math.max(0, Math.round((Date.now() - new Date(workoutState_.startedAt).getTime()) / 1000));
     const m = Math.floor(elapsedSec / 60);
     const s = elapsedSec % 60;
-    el.textContent = `${m}:${s < 10 ? '0' + s : s} elapsed`;
+    const mmss = `${m}:${s < 10 ? '0' + s : s}`;
+    if (el) el.textContent = `${mmss} elapsed`;
+    // Also drives the persistent resume pill (see updateActiveWorkoutPill_)
+    // so its time keeps ticking even while a completely different
+    // screen — Add Food, History, Profile — is what's actually showing.
+    if (pillTimeEl) pillTimeEl.textContent = mmss;
   };
   tick();
   workoutElapsedInterval_ = setInterval(tick, 1000);
@@ -1464,6 +1591,35 @@ function startWorkoutElapsedTimer_() {
 function stopWorkoutElapsedTimer_() {
   if (workoutElapsedInterval_) { clearInterval(workoutElapsedInterval_); workoutElapsedInterval_ = null; }
 }
+
+// --- Persistent "Active Workout" resume pill --------------------------
+// Visible above the bottom nav from ANY screen (except screen-workout
+// itself, where it would be redundant) while a workout is in
+// progress — so navigating off to log a meal or check history never
+// makes an in-progress session disappear from view. Re-evaluated on
+// every showScreen() call (see that function) rather than only when
+// starting/finishing a workout, since the right answer depends on
+// BOTH "is a workout active" AND "which screen is showing right now".
+
+function updateActiveWorkoutPill_(currentScreenId) {
+  const pill = el_('active-workout-pill');
+  if (!pill) return;
+  pill.hidden = !workoutState_ || currentScreenId === 'screen-workout';
+}
+
+document.getElementById('active-workout-resume-btn')?.addEventListener('click', () => {
+  if (!workoutState_) return;
+  renderWorkoutScreen_();
+  showScreen('screen-workout');
+});
+
+document.getElementById('active-workout-pill-discard-btn')?.addEventListener('click', () => {
+  if (!workoutState_) return;
+  stopWorkoutElapsedTimer_();
+  stopRestTimer_();
+  workoutState_ = null;
+  updateActiveWorkoutPill_(document.querySelector('.screen:not([hidden])')?.id);
+});
 
 // --- Rest timer --------------------------------------------------------
 
