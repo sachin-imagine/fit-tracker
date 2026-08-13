@@ -13,10 +13,34 @@
  * the 30-day session actually expires.
  */
 
-console.info('Fit Tracker api.js — build: email-code-auth-v6 (more actionable redirect diagnostics)');
+console.info('Fit Tracker api.js — build: email-code-auth-v7 (request timeout, so a slow/hung backend call surfaces an error instead of leaving a button stuck on "Sending..." forever)');
+
+// Apps Script (mail-sending calls especially) can occasionally take a
+// long time to respond, but it should never take THIS long — without
+// a timeout, a genuinely hung request left every caller's "Sending…"/
+// "Saving…" button disabled indefinitely with no way to recover short
+// of reloading the page. 25s is generous for a slow cold start while
+// still failing well before a person concludes the app is broken.
+const REQUEST_TIMEOUT_MS = 25000;
 
 const SESSION_STORAGE_KEY = 'fitTrackerSessionToken';
 let currentSessionToken = localStorage.getItem(SESSION_STORAGE_KEY) || null;
+
+async function fetchWithTimeout_(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('The backend did not respond within ' + (REQUEST_TIMEOUT_MS / 1000) +
+        's. Check your connection and try again — if this keeps happening, check the Apps Script Executions log.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function setSessionToken(token) {
   currentSessionToken = token;
@@ -38,7 +62,7 @@ async function apiGet(action, params) {
   if (params) {
     Object.keys(params).forEach((k) => url.searchParams.set(k, params[k]));
   }
-  const res = await fetch(url.toString(), { method: 'GET' });
+  const res = await fetchWithTimeout_(url.toString(), { method: 'GET' });
   return parseApiResponse_(res);
 }
 
@@ -52,7 +76,7 @@ async function apiPost(action, payload) {
     sessionToken: currentSessionToken,
     payload: payload || {}
   });
-  const res = await fetch(CONFIG.APPS_SCRIPT_URL, {
+  const res = await fetchWithTimeout_(CONFIG.APPS_SCRIPT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body

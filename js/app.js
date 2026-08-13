@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: profile-edit-and-polish-v1 (editable profile via pencil icon, persistent active-workout resume pill, sign-in/loading animation pass)');
+console.info('Fit Tracker app.js — build: coach-chat-v1 (AI Coach tab: ongoing chat with full conversation memory, grounded in real profile/weight/workout data)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -86,6 +86,9 @@ document.getElementById('bottom-nav').addEventListener('click', (e) => {
   }
   if (btn.dataset.screen === 'screen-log') {
     loadWorkoutHistory_();
+  }
+  if (btn.dataset.screen === 'screen-coach') {
+    loadCoachHistory_();
   }
 });
 
@@ -205,25 +208,48 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = 'Sending...';
 
+  // Move to the "enter code" screen IMMEDIATELY rather than leaving the
+  // user staring at "Sending..." here for however long Apps Script
+  // takes to actually send the mail (a real-device report: the code
+  // WAS arriving, but this screen sat on "Sending..." for a long time
+  // regardless, since nothing here depended on watching the inbox —
+  // the code is delivered independently by email either way, so
+  // there's nothing to gain by waiting here for the request to
+  // resolve before switching screens). The verify screen shows its own
+  // "still sending" notice for the gap, and reports an error there
+  // (with "Use a different email" as the way back) if the send itself
+  // actually fails.
+  pendingEmail = email;
+  document.getElementById('verify-email').textContent = email;
+  document.getElementById('verify-form').reset();
+  showScreen('screen-verify');
+  const sendingNotice = document.getElementById('verify-sending-notice');
+  const verifyErrorEl = document.getElementById('verify-error');
+  if (verifyErrorEl) verifyErrorEl.hidden = true;
+  if (sendingNotice) sendingNotice.hidden = false;
+  const resendBtn = document.getElementById('resend-code-btn');
+  if (resendBtn) resendBtn.disabled = true;
+
   try {
     // GET, not POST — see the note at the top of Code.gs: a redirect on
     // a POST silently drops the body, but a redirect on a GET preserves
     // the query string, so sign-in survives the "/u/N/" account-slot
     // quirk regardless of which account is active in this browser.
     await apiGet('requestLoginCode', { email });
-    pendingEmail = email;
-    document.getElementById('verify-email').textContent = email;
-    document.getElementById('verify-form').reset();
-    showScreen('screen-verify');
+    if (sendingNotice) sendingNotice.hidden = true;
     // The countdown that matters is on the screen the user is now
     // looking at (Resend code) — the Send code button they just left
     // isn't visible, so put it back to normal for if they return via
     // "Use a different email".
     resetCooldown_(submitBtn, 'Send code');
-    startResendCooldown_(document.getElementById('resend-code-btn'), RESEND_COOLDOWN_SECONDS, 'Resend code');
+    startResendCooldown_(resendBtn, RESEND_COOLDOWN_SECONDS, 'Resend code');
   } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.hidden = false;
+    if (sendingNotice) sendingNotice.hidden = true;
+    if (verifyErrorEl) {
+      verifyErrorEl.textContent = 'Could not send the code: ' + err.message;
+      verifyErrorEl.hidden = false;
+    }
+    if (resendBtn) { resendBtn.disabled = false; resendBtn.textContent = 'Resend code'; }
     if (/wait/i.test(err.message)) {
       startResendCooldown_(submitBtn, RESEND_COOLDOWN_SECONDS, 'Send code');
     } else {
@@ -585,11 +611,13 @@ const GOAL_CHECKBOX_VALUES_ = ['Fat loss', 'Muscle gain', 'Recomposition', 'Gene
 
 function setSetupScreenMode_(mode) {
   editProfileMode_ = mode === 'edit';
-  const backBtn = el_('setup-back-btn');
+  const cancelBtn = el_('setup-cancel-btn');
   const title = el_('setup-title');
   const subtitle = el_('setup-subtitle');
   const submitBtn = el_('setup-submit-btn');
-  if (backBtn) backBtn.hidden = !editProfileMode_;
+  // Cancel lives at the BOTTOM of the form next to Save (not up in the
+  // header) — see the index.html comment on screen-setup for why.
+  if (cancelBtn) cancelBtn.hidden = !editProfileMode_;
   if (editProfileMode_) {
     if (title) title.textContent = 'Edit your profile';
     if (subtitle) subtitle.textContent = 'Update anything that\'s changed — your coach uses this to personalize every recommendation.';
@@ -644,7 +672,7 @@ function openEditProfile_() {
 
 document.getElementById('edit-profile-btn')?.addEventListener('click', openEditProfile_);
 
-document.getElementById('setup-back-btn')?.addEventListener('click', () => {
+document.getElementById('setup-cancel-btn')?.addEventListener('click', () => {
   setSetupScreenMode_('setup'); // reset chrome for next time this screen is needed fresh
   showScreen('screen-profile');
 });
@@ -1703,7 +1731,7 @@ function renderExercisePickerList_(filterText) {
     btn.type = 'button';
     btn.className = 'exercise-picker-item';
     btn.innerHTML = `
-      <span class="exercise-icon">${escapeHtml_(ex.iconEmoji || '🏋️')}</span>
+      <span class="exercise-icon">${escapeHtml_(deriveExerciseIcon_(ex))}</span>
       <span class="exercise-picker-info">
         <span class="exercise-picker-name">${escapeHtml_(ex.name)}</span>
         <span class="exercise-picker-meta">${escapeHtml_([ex.muscleGroup, ex.equipment].filter(Boolean).join(' · '))}</span>
@@ -1722,15 +1750,22 @@ document.getElementById('exercise-custom-add-btn')?.addEventListener('click', as
   if (!nameInput) return;
   const name = nameInput.value.trim();
   if (errorEl) errorEl.hidden = true;
-  if (!name) return;
+  if (!name) {
+    // Previously a silent no-op — tapping "Add" with nothing typed did
+    // nothing at all, no different from a stuck/broken button. Now
+    // says exactly what's needed instead of leaving it to guesswork.
+    showAndRevealError_(errorEl, 'Type an exercise name first.');
+    nameInput.focus();
+    return;
+  }
   try {
     const result = await apiPost('addCustomExercise', { name });
     exerciseLibraryCache_ = null; // stale after adding — refetch next time the picker opens
     selectExerciseForWorkout_({
-      name: result.name, iconEmoji: '🏋️', muscleGroup: '', equipment: '', defaultRestSec: 90
+      name: result.name, iconEmoji: '', muscleGroup: '', equipment: '', defaultRestSec: 90
     });
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    showAndRevealError_(errorEl, err.message);
   }
 });
 
@@ -1751,7 +1786,7 @@ async function selectExerciseForWorkout_(ex) {
     exercise = {
       name: ex.name,
       muscleGroup: ex.muscleGroup || '',
-      iconEmoji: ex.iconEmoji || '🏋️',
+      iconEmoji: deriveExerciseIcon_(ex),
       defaultRestSec: ex.defaultRestSec || 90,
       previousSets: [],
       sets: []
@@ -1980,7 +2015,13 @@ async function toggleSetComplete_(exercise, set) {
     if (nextCompleted) startRestTimer_(exercise.defaultRestSec);
     renderWorkoutScreen_();
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    // A real-device report of "tapping the checkmark does nothing" was
+    // this error firing correctly but rendering off-screen, below
+    // however many exercise cards were already on the page — see
+    // showAndRevealError_. If this fires with a "Sheet not found"-style
+    // message, runMigrationAddWorkoutTracking() likely hasn't been run
+    // yet on the live spreadsheet (see DESIGN.md section 19/21).
+    showAndRevealError_(errorEl, err.message);
   }
 }
 
@@ -2047,16 +2088,121 @@ function renderHistoryCard_(session) {
   const card = document.createElement('div');
   card.className = 'history-card';
   const mins = Math.round((session.durationSec || 0) / 60);
+  const exercises = session.exercises || [];
+  const exercisesLine = exercises.length
+    ? exercises.map(escapeHtml_).join(', ')
+    : 'No completed sets';
+  // "bestExercise" is the exercise with the highest total volume
+  // (weight × reps) in this session — a plain computation, not a
+  // judgment call — labeled here as exactly that, not as some more
+  // impressive-sounding claim the data doesn't actually support.
+  const bestExerciseLine = session.bestExercise
+    ? `<span class="history-card-best">🥇 Top by volume: ${escapeHtml_(session.bestExercise)}</span>`
+    : '';
   card.innerHTML = `
-    <div class="history-card-top"><strong>${escapeHtml_(session.date)}</strong><span>${mins} min</span></div>
+    <div class="history-card-top"><strong>${escapeHtml_(formatDisplayDate_(session.date))}</strong><span>${mins} min</span></div>
     <div class="history-card-stats">
       <span>Volume: ${session.totalVolumeKg}kg</span>
       <span>Sets: ${session.totalSets}</span>
       <span>🏆 ${session.prCount}</span>
     </div>
+    <div class="history-card-exercises">${exercisesLine}</div>
+    ${bestExerciseLine}
   `;
   return card;
 }
+
+// --- Coach chat ------------------------------------------------------
+// An ONGOING conversation, not a one-off analysis screen — the full
+// history is loaded fresh every time this tab opens (see Coach.gs's
+// handleGetCoachHistory_) and re-sent in full with every new message
+// server-side, so the coach's replies stay grounded in real, current
+// data instead of treating each visit as a cold start. See DESIGN.md
+// section 21 for the memory-model decision this implements.
+
+async function loadCoachHistory_() {
+  const loadingEl = el_('coach-history-loading');
+  const messagesEl = el_('coach-messages');
+  const emptyEl = el_('coach-empty');
+  const errorEl = el_('coach-error');
+  if (errorEl) errorEl.hidden = true;
+
+  // Reload every time the tab is opened (not just once) — a message
+  // sent from another device/tab, or simply re-opening after a while,
+  // should always show the true current conversation, never a stale
+  // in-memory copy.
+  if (loadingEl) loadingEl.hidden = false;
+  if (messagesEl) messagesEl.hidden = true;
+
+  try {
+    const result = await apiGet('getCoachHistory');
+    const messages = result.messages || [];
+    if (messagesEl) {
+      messagesEl.innerHTML = '';
+      messages.forEach((m) => messagesEl.appendChild(renderCoachMessage_(m)));
+    }
+    if (emptyEl) emptyEl.hidden = messages.length > 0;
+    scrollCoachToBottom_();
+  } catch (err) {
+    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+  } finally {
+    if (loadingEl) loadingEl.hidden = true;
+    if (messagesEl) messagesEl.hidden = false;
+  }
+}
+
+function renderCoachMessage_(message) {
+  const bubble = document.createElement('div');
+  bubble.className = 'coach-msg ' + (message.role === 'user' ? 'coach-msg-user' : 'coach-msg-coach');
+  bubble.textContent = message.content;
+  return bubble;
+}
+
+function scrollCoachToBottom_() {
+  const messagesEl = el_('coach-messages');
+  if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+document.getElementById('coach-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = el_('coach-message-input');
+  const sendBtn = el_('coach-send-btn');
+  const errorEl = el_('coach-error');
+  const typingEl = el_('coach-typing');
+  const messagesEl = el_('coach-messages');
+  const emptyEl = el_('coach-empty');
+  if (!input) return;
+
+  const message = input.value.trim();
+  if (!message) return;
+  if (errorEl) errorEl.hidden = true;
+
+  // Optimistic: show the user's own message immediately rather than
+  // waiting on the round trip — Coach.gs's handleSendCoachMessage_
+  // saves the user's message server-side BEFORE calling Gemini, so
+  // this always matches what actually gets persisted even if the
+  // Gemini call itself then fails.
+  if (messagesEl) messagesEl.appendChild(renderCoachMessage_({ role: 'user', content: message }));
+  if (emptyEl) emptyEl.hidden = true;
+  scrollCoachToBottom_();
+  input.value = '';
+  input.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+  if (typingEl) typingEl.hidden = false;
+
+  try {
+    const result = await apiPost('sendCoachMessage', { message });
+    if (messagesEl) messagesEl.appendChild(renderCoachMessage_({ role: 'coach', content: result.reply }));
+    scrollCoachToBottom_();
+  } catch (err) {
+    showAndRevealError_(errorEl, err.message);
+  } finally {
+    if (typingEl) typingEl.hidden = true;
+    input.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
+  }
+});
 
 // Minimal HTML-escaping for exercise names/muscle groups interpolated
 // via innerHTML above — none of this data is expected to contain
@@ -2067,6 +2213,77 @@ function escapeHtml_(str) {
   return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
+}
+
+// Client-side mirror of Config.gs's deriveExerciseIcon_ — a real-device
+// screenshot showed every single exercise in the picker rendering the
+// same barbell emoji, even ones the backend's own seed data assigns a
+// distinct icon to. Root cause: the IconEmoji column was added to an
+// already-existing Exercises sheet by a later migration, which only
+// appends the header — never backfills a value into rows that existed
+// before it — so every already-seeded exercise had (and, until the
+// user re-runs runMigrationRefreshExerciseIcons server-side, may still
+// have) a blank IconEmoji cell, and the old `ex.iconEmoji || '🏋️'`
+// fallback then rendered the same generic barbell for all of them.
+// This client-side fallback fixes the SAME symptom immediately without
+// waiting on that migration, by deriving a varied icon from the
+// exercise's own name/muscle group instead of one hardcoded emoji.
+const EXERCISE_NAME_ICONS_ = {
+  'bench press (barbell)': '🏋️',
+  'squat (barbell)': '🦵',
+  'deadlift (barbell)': '🏋️‍♂️',
+  'overhead press (barbell)': '🙆',
+  'barbell row': '🚣',
+  'pull-up': '🧗',
+  'push-up': '🤸',
+  'dumbbell curl': '💪',
+  'tricep pushdown': '🔽',
+  'lat pulldown': '⬇️',
+  'leg press': '🦵',
+  'plank': '🧘'
+};
+const MUSCLE_GROUP_ICONS_ = {
+  Chest: '🏋️', Legs: '🦵', Back: '🚣', Shoulders: '🙆', Arms: '💪', Core: '🧘'
+};
+function deriveExerciseIcon_(ex) {
+  if (ex && ex.iconEmoji) return ex.iconEmoji;
+  const key = ex && ex.name ? ex.name.trim().toLowerCase() : '';
+  if (EXERCISE_NAME_ICONS_[key]) return EXERCISE_NAME_ICONS_[key];
+  if (ex && ex.muscleGroup && MUSCLE_GROUP_ICONS_[ex.muscleGroup]) return MUSCLE_GROUP_ICONS_[ex.muscleGroup];
+  return '🏋️';
+}
+
+/**
+ * Shows an error message AND scrolls it into view. Several error
+ * banners on longer, scrollable screens (the active-workout screen
+ * especially, once a few exercise cards are added) sit well below
+ * where the action that could fail actually happened — a real-device
+ * report of "tapping the checkmark does nothing" turned out to be a
+ * genuinely-thrown backend error rendering completely out of view, not
+ * a silent no-op. Used anywhere an error can be triggered from partway
+ * down a screen the user hasn't necessarily scrolled.
+ */
+function showAndRevealError_(el, message) {
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/**
+ * Formats a 'yyyy-MM-dd' (or ISO datetime) date string for display —
+ * e.g. "Aug 14, 2026" — instead of showing the raw value a backend
+ * response happens to send. Tolerates both shapes defensively: even
+ * though Workouts.gs's getRecentWorkoutSessions now always sends a
+ * clean date string, a client-side fallback means a display bug here
+ * can never again look like the previous raw-ISO-timestamp report.
+ */
+function formatDisplayDate_(dateStr) {
+  if (!dateStr) return '—';
+  const datePart = String(dateStr).slice(0, 10); // 'yyyy-MM-dd' prefix either way
+  const d = new Date(datePart + 'T00:00:00');
+  if (isNaN(d.getTime())) return String(dateStr);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /**
