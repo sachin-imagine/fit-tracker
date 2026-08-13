@@ -55,6 +55,7 @@
       <div class="signin-icon signin-anim-item">📩</div>
       <h1 class="signin-anim-item">Check your email</h1>
       <p class="subtitle signin-anim-item">We sent a 6-digit code to <span id="verify-email"></span>.</p>
+      <p id="verify-sending-notice" class="notice-text" hidden>Sending your code — this can take a few seconds…</p>
       <form id="verify-form" class="form signin-anim-item">
         <label>Code
           <input class="code-input" type="text" name="code" inputmode="numeric" pattern="[0-9]*"
@@ -95,15 +96,18 @@
   <!-- SCREEN: First-run profile setup — ALSO reused for editing an
        existing profile later (see app.js's openEditProfile_/
        editProfileMode_). In edit mode: the header/subtitle swap to
-       "Edit your profile", a back button appears (id
-       setup-back-btn), the submit button reads "Save changes",
+       "Edit your profile", the submit button reads "Save changes",
        fields arrive pre-filled from the current profile, and saving
        returns to the Profile screen instead of the dashboard —
        everything else (the form, its fields, its validation) is
-       shared, unduplicated, between first-run setup and later edits. -->
+       shared, unduplicated, between first-run setup and later edits.
+       Cancel (id setup-cancel-btn) sits at the BOTTOM next to Save,
+       not up in the header — a real-device screenshot showed the old
+       header-positioned back button sitting above a long scrollable
+       form, easy to miss/hard to reach after scrolling down to edit a
+       field near the bottom. -->
   <section id="screen-setup" class="screen" hidden>
     <header class="screen-header">
-      <button type="button" id="setup-back-btn" class="btn-secondary btn-compact" hidden>← Back</button>
       <h1 id="setup-title">Welcome, <span class="welcome-name"></span> 👋</h1>
       <p class="subtitle" id="setup-subtitle">Let's set up your fitness profile. This runs once — you can edit it later.</p>
     </header>
@@ -155,7 +159,10 @@
         <textarea name="typicalSchedule" rows="2" placeholder="e.g. gym mornings 7am, desk job 9-6, dinner ~9pm"></textarea>
       </label>
       <p id="setup-error" class="error-text" hidden></p>
-      <button type="submit" class="btn-primary" id="setup-submit-btn">Save profile & continue</button>
+      <div class="form-actions-row">
+        <button type="submit" class="btn-primary" id="setup-submit-btn">Save profile & continue</button>
+        <button type="button" id="setup-cancel-btn" class="btn-secondary" hidden>Cancel</button>
+      </div>
     </form>
   </section>
   <!-- SCREEN: Dashboard (Today) -->
@@ -329,6 +336,7 @@
       Rest <span id="workout-rest-remaining">90</span>s
       <button type="button" id="workout-rest-skip-btn">Skip</button>
     </p>
+    <p class="set-type-hint">Tap a set's number to cycle: normal → warm-up (W) → failed (✕). Tap ✓ to log/save that set.</p>
     <div id="workout-exercise-list" class="workout-exercise-list"></div>
     <div id="workout-empty-notice" class="notice-card" hidden>
       <strong>No exercises yet.</strong>
@@ -376,6 +384,33 @@
     <div id="workout-history-list" class="workout-history-list"></div>
     <p id="workout-history-empty" class="subtitle" hidden>No finished workouts yet — log one from Today.</p>
     <p id="workout-history-error" class="error-text" hidden></p>
+  </section>
+  <!-- SCREEN: Coach — an ONGOING chat with the AI personal trainer,
+       not a one-off analysis screen. The full conversation persists
+       server-side (Coach Messages sheet) and is sent back in full with
+       every new message, alongside a fresh snapshot of this person's
+       profile/recent weigh-ins/recent workouts, so replies stay
+       grounded in real current data rather than treating each message
+       as a cold start — see DESIGN.md section 21. -->
+  <section id="screen-coach" class="screen" hidden>
+    <header class="screen-header">
+      <h1>Coach</h1>
+      <p class="subtitle">Your personal trainer — knows your goals, your recent weigh-ins, and your recent workouts.</p>
+    </header>
+    <div id="coach-history-loading" class="exercise-loading" hidden>
+      <span class="exercise-loading-icon">🏋️</span>
+      <p>Loading your conversation…</p>
+    </div>
+    <div id="coach-messages" class="coach-messages"></div>
+    <p id="coach-empty" class="subtitle" hidden>Say hello — your coach already knows your profile and recent activity.</p>
+    <div id="coach-typing" class="coach-typing" hidden>
+      <span class="coach-typing-icon">🏋️</span> Coach is typing…
+    </div>
+    <p id="coach-error" class="error-text" hidden></p>
+    <form id="coach-form" class="coach-input-row">
+      <input type="text" id="coach-message-input" placeholder="Ask your coach anything…" autocomplete="off" required>
+      <button type="submit" class="btn-primary btn-compact" id="coach-send-btn">Send</button>
+    </form>
   </section>
   <!-- SCREEN: Profile (view/edit) — this is a fully functional personal
        trainer app, not a static tracker: every field here can be
@@ -432,7 +467,7 @@
     <button class="nav-btn" data-screen="screen-log">
       <span>📈</span><small>History</small>
     </button>
-    <button class="nav-btn" data-screen="screen-coach" disabled>
+    <button class="nav-btn" data-screen="screen-coach">
       <span>🤖</span><small>Coach</small>
     </button>
     <button class="nav-btn" data-screen="screen-profile">

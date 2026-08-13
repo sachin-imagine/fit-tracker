@@ -487,6 +487,29 @@ input:focus, select:focus, textarea:focus {
   width: 100%;
 }
 
+/* Save + Cancel sit together at the BOTTOM of a form (screen-setup in
+   edit mode) — not a back button stranded up in the header above a
+   long scrollable form, which a real-device screenshot showed being
+   effectively unreachable/easy to miss after scrolling down to edit a
+   field near the bottom. */
+.form-actions-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.form-actions-row .btn-primary,
+.form-actions-row .btn-secondary {
+  margin-top: 0;
+  flex: 1;
+}
+
+.set-type-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0 8px;
+}
+
 .code-input {
   text-align: center;
   font-size: 28px;
@@ -1038,4 +1061,88 @@ input:focus, select:focus, textarea:focus {
   gap: 14px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.history-card-exercises {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.history-card-best {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* --- Coach chat ------------------------------------------------------ */
+/* An ONGOING conversation, styled like a real chat (bubbles left/right
+   by sender) rather than a form-and-result screen, since that's what
+   distinguishes this from the one-off Add Food / Form Check screens —
+   see DESIGN.md section 21. */
+
+.coach-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 12px;
+  overflow-y: auto;
+}
+
+.coach-msg {
+  max-width: 82%;
+  padding: 10px 13px;
+  border-radius: 16px;
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  animation: screenEnter 0.18s ease-out;
+}
+
+.coach-msg-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #062b13;
+  border-bottom-right-radius: 4px;
+}
+
+.coach-msg-coach {
+  align-self: flex-start;
+  background: var(--surface);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+
+.coach-typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 4px 0 10px;
+}
+
+.coach-typing-icon {
+  font-size: 18px;
+  animation: exerciseBounce 0.9s ease-in-out infinite;
+}
+
+.coach-input-row {
+  display: flex;
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  padding-top: 8px;
+  background: var(--bg);
+}
+
+.coach-input-row input {
+  flex: 1;
+}
+
+.coach-input-row .btn-primary {
+  margin-top: 0;
+  width: auto;
+  padding: 0 20px;
 }
