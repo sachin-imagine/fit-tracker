@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: coach-chat-v1 (AI Coach tab: ongoing chat with full conversation memory, grounded in real profile/weight/workout data)');
+console.info('Fit Tracker app.js — build: coach-fixes-v1 (goal-denial fix, coach input bar + active-workout pill positioning via measured --nav-height, workout timer deferred to first exercise pick, capped Gemini history payload)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -70,6 +70,26 @@ function showScreen(id) {
   });
   updateActiveWorkoutPill_(id);
 }
+
+/**
+ * Measures the REAL height of the bottom nav (only possible once it's
+ * visible — offsetHeight is 0 while [hidden]) and writes it to the
+ * --nav-height CSS variable, so every "sit just above the nav"
+ * position (the active-workout pill, the coach chat input bar, #app's
+ * own scroll clearance) derives from one real number instead of
+ * separate hardcoded guesses that can drift out of sync with each
+ * other and with the actual rendered nav.
+ */
+function syncNavHeight_() {
+  if (!bottomNav || bottomNav.hidden) return;
+  const h = bottomNav.offsetHeight;
+  if (h) document.documentElement.style.setProperty('--nav-height', h + 'px');
+}
+
+window.addEventListener('resize', () => {
+  syncNavHeight_();
+  updateCoachInputBarPosition_();
+});
 
 function setWelcomeName(name) {
   document.querySelectorAll('.welcome-name').forEach((node) => {
@@ -445,6 +465,11 @@ async function enterAppShell_(profile) {
   }
   renderProfile(profile);
   bottomNav.hidden = false;
+  // offsetHeight is 0 while the nav has [hidden] set, so this can only
+  // be measured now that it's actually visible — see the --nav-height
+  // comment in style.css for why this replaces two drifting hardcoded
+  // magic numbers (84px/74px) that stood in for "the real nav height".
+  syncNavHeight_();
   showScreen('screen-dashboard');
 
   // No weekly-summary element in the current index.html yet — this
@@ -1572,17 +1597,13 @@ document.getElementById('quick-workout-btn')?.addEventListener('click', async ()
     showScreen('screen-workout');
     return;
   }
-  showLoading_('Starting your workout…');
-  try {
-    const result = await apiPost('startWorkoutSession', {});
-    workoutState_ = freshWorkoutState_(result.sessionId, result.startedAt);
-    renderWorkoutScreen_();
-    showScreen('screen-workout');
-    startWorkoutElapsedTimer_();
-    openExercisePicker_(); // go straight to "add your first exercise"
-  } catch (err) {
-    showLoadingError_(err.message);
-  }
+  // Deliberately do NOT create the session or start the clock here —
+  // tapping "Log Workout" only opens the exercise picker. The session
+  // (and its elapsed-time clock) is created in selectExerciseForWorkout_,
+  // the moment the user actually picks their first exercise, so time
+  // spent browsing/searching the exercise list before deciding never
+  // gets counted as workout time.
+  openExercisePicker_();
 });
 
 document.getElementById('workout-cancel-btn')?.addEventListener('click', () => {
@@ -1633,6 +1654,39 @@ function updateActiveWorkoutPill_(currentScreenId) {
   const pill = el_('active-workout-pill');
   if (!pill) return;
   pill.hidden = !workoutState_ || currentScreenId === 'screen-workout';
+  // The coach chat's input bar shares the same "just above the nav"
+  // spot the pill floats in — whenever the pill's visibility changes,
+  // re-check whether the input bar needs to shift up above it.
+  updateCoachInputBarPosition_();
+}
+
+/**
+ * Keeps the Coach chat's input bar correctly positioned: by default it
+ * sits just above the bottom nav (the CSS default), but if the
+ * active-workout resume pill is ALSO visible right now, it shifts up
+ * to sit just above that pill instead — so the two floating bars never
+ * overlap. Also tops up #coach-messages' bottom padding so the last
+ * message is never hidden behind wherever the (now fixed-position)
+ * input bar currently is. Safe to call even when the coach screen
+ * isn't showing right now — el_ + hidden-element measurements just
+ * become harmless zero-size rects.
+ */
+function updateCoachInputBarPosition_() {
+  const form = el_('coach-form');
+  if (!form) return;
+  const pill = document.getElementById('active-workout-pill');
+  const gap = 12;
+  if (pill && !pill.hidden) {
+    const pillRect = pill.getBoundingClientRect();
+    form.style.bottom = Math.max(0, window.innerHeight - pillRect.top + gap) + 'px';
+  } else {
+    form.style.bottom = ''; // fall back to the CSS default (just above the nav)
+  }
+  const messagesEl = el_('coach-messages');
+  if (messagesEl) {
+    const formRect = form.getBoundingClientRect();
+    messagesEl.style.paddingBottom = Math.max(0, window.innerHeight - formRect.top) + 16 + 'px';
+  }
 }
 
 document.getElementById('active-workout-resume-btn')?.addEventListener('click', () => {
@@ -1711,7 +1765,11 @@ async function openExercisePicker_() {
 }
 
 document.getElementById('exercise-picker-back-btn')?.addEventListener('click', () => {
-  showScreen('screen-workout');
+  // No session exists yet if the picker was opened straight from
+  // "Log Workout" and the user backed out without picking anything —
+  // screen-workout would render a workout screen for a session that
+  // was never created, so go back to the dashboard instead.
+  showScreen(workoutState_ ? 'screen-workout' : 'screen-dashboard');
 });
 
 document.getElementById('exercise-search-input')?.addEventListener('input', (e) => {
@@ -1777,10 +1835,25 @@ document.getElementById('exercise-custom-add-btn')?.addEventListener('click', as
  * minute ago in this same session never shows as its own "previous" —
  * see Workouts.gs's handleGetPreviousSetData_), and seeds one starter
  * set row.
+ *
+ * Also where the workout session itself (and its elapsed-time clock)
+ * actually gets created, if this is the FIRST exercise picked — see
+ * the quick-workout-btn handler above for why that moved here instead
+ * of firing the moment "Log Workout" was tapped.
  */
 async function selectExerciseForWorkout_(ex) {
+  if (!workoutState_) {
+    showLoading_('Starting your workout…');
+    try {
+      const result = await apiPost('startWorkoutSession', {});
+      workoutState_ = freshWorkoutState_(result.sessionId, result.startedAt);
+      startWorkoutElapsedTimer_();
+    } catch (err) {
+      showLoadingError_(err.message);
+      return;
+    }
+  }
   showScreen('screen-workout');
-  if (!workoutState_) return;
   let exercise = findWorkoutExercise_(ex.name);
   if (!exercise) {
     exercise = {
