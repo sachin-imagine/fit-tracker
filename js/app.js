@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: ux-polish-v2 (real exercise icons, Form Check redesign + 60s limit, logout/exercise-add alignment fixes, gym micro-animations, coach chat timestamps + date dividers)');
+console.info('Fit Tracker app.js — build: ux-polish-v3 (Add Diet layout fix + auto-reset after save, macro-input overflow fix, coach auto-scroll-to-bottom fix, Form Check icon, set-row sizing, log-set pending state, water intake logging)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -538,6 +538,7 @@ async function enterAppShell_(profile) {
 async function refreshTodaySummary_() {
   const caloriesEl = el_('stat-calories');
   const proteinEl = el_('stat-protein');
+  const waterEl = el_('stat-water');
   try {
     const { todaySummary } = await apiGet('getTodaySummary');
     if (caloriesEl) {
@@ -548,6 +549,14 @@ async function refreshTodaySummary_() {
       proteinEl.textContent = todaySummary.mealsLoggedToday > 0
         ? `${todaySummary.proteinGToday}g` : '–';
     }
+    if (waterEl) {
+      const haveWaterTarget = todaySummary.waterTargetMl > 0;
+      const waterL = (Number(todaySummary.waterMlToday) || 0) / 1000;
+      const targetL = (Number(todaySummary.waterTargetMl) || 0) / 1000;
+      waterEl.textContent = haveWaterTarget
+        ? `${waterL.toFixed(1)} / ${targetL.toFixed(1)} L`
+        : '– / –';
+    }
   } catch (err) {
     // Non-critical to the rest of the dashboard rendering — leave the
     // tiles at their "–" default and log for debugging rather than
@@ -555,6 +564,41 @@ async function refreshTodaySummary_() {
     console.error('Could not load today\'s food summary:', err);
   }
 }
+
+/**
+ * Water quick-add buttons on the Today dashboard. A real-device report:
+ * the Water stat tile had shown a target since Phase 1 but nothing on
+ * the app ever let a person actually log any water — this wires the
+ * three pill buttons to the new `logWater` backend action and refreshes
+ * the stat tile immediately after, same "optimistic-ish but re-fetch
+ * the real number" pattern as the rest of the dashboard.
+ */
+function initWaterQuickAdd_() {
+  const errorEl = el_('dashboard-error');
+  document.querySelectorAll('.water-add-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      if (errorEl) errorEl.hidden = true;
+      const amountMl = Number(btn.dataset.ml);
+      const allButtons = document.querySelectorAll('.water-add-btn');
+      allButtons.forEach((b) => { b.disabled = true; });
+      try {
+        await apiPost('logWater', { amountMl });
+        await refreshTodaySummary_();
+      } catch (err) {
+        console.error('Could not log water:', err);
+        if (errorEl) {
+          errorEl.textContent = humanizeErrorMessage_(err.message || 'Could not log water.');
+          errorEl.hidden = false;
+        }
+      } finally {
+        allButtons.forEach((b) => { b.disabled = false; });
+      }
+    });
+  });
+}
+
+initWaterQuickAdd_();
 
 function renderWeeklySummary_(summary) {
   const el = el_('weekly-summary-body');
@@ -1378,7 +1422,31 @@ function resetAddFoodScreen_() {
   const manualErrorEl = el_('addfood-manual-error');
   if (manualErrorEl) manualErrorEl.hidden = true;
   setAddFoodMode_('scan');
+  showAddFoodPicker_(true);
 }
+
+/**
+ * Toggles between the full scan/manual picker and its collapsed
+ * "+ Add another item" form once at least one item is already in the
+ * review list — see the comment on #addfood-picker in index.html for
+ * why this exists (a real-device report: the full picker sitting above
+ * the confidence/items card pushed the actual results below the fold).
+ */
+function showAddFoodPicker_(visible) {
+  const pickerEl = el_('addfood-picker');
+  const addAnotherBtn = el_('addfood-add-another-btn');
+  const subtitleEl = el_('addfood-subtitle');
+  if (pickerEl) pickerEl.hidden = !visible;
+  if (addAnotherBtn) addAnotherBtn.hidden = visible;
+  // The subtitle explains the two ways IN — only relevant while
+  // actually choosing/using one of them, not while reviewing items
+  // already added.
+  if (subtitleEl) subtitleEl.hidden = !visible;
+}
+
+document.getElementById('addfood-add-another-btn')?.addEventListener('click', () => {
+  showAddFoodPicker_(true);
+});
 
 /**
  * Switches between the two ways into Add Diet — scanning a photo (the
@@ -1450,8 +1518,8 @@ document.getElementById('addfood-manual-form')?.addEventListener('submit', (e) =
   renderAddFoodReview_();
   const reviewEl = el_('addfood-review');
   if (reviewEl) reviewEl.hidden = false;
+  showAddFoodPicker_(false);
   e.target.reset();
-  el_('addfood-manual-name')?.focus();
 });
 
 document.getElementById('addfood-photo-input')?.addEventListener('change', (e) => {
@@ -1546,10 +1614,9 @@ document.getElementById('addfood-capture-form')?.addEventListener('submit', asyn
       photoMimeType: photo.mimeType
     };
     renderAddFoodReview_();
-    const formEl = el_('addfood-capture-form');
-    if (formEl) formEl.hidden = true;
     const reviewEl = el_('addfood-review');
     if (reviewEl) reviewEl.hidden = false;
+    showAddFoodPicker_(false);
   } catch (err) {
     if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
@@ -1599,7 +1666,7 @@ function buildAddFoodItemRow_(item, index) {
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
   removeBtn.className = 'food-item-remove-btn';
-  removeBtn.textContent = item.removed ? 'Undo remove' : 'Not in my meal — remove';
+  removeBtn.textContent = item.removed ? 'Undo' : 'Remove';
   removeBtn.addEventListener('click', () => {
     item.removed = !item.removed;
     renderAddFoodReview_();
@@ -1764,6 +1831,15 @@ document.getElementById('addfood-save-btn')?.addEventListener('click', async () 
     // logged immediately, not only after the next full app reload —
     // this is exactly the gap a real-device report caught.
     refreshTodaySummary_();
+    // A real-device report: saving left the person staring at a
+    // disabled "Saved" button with nowhere to go, on a screen whose
+    // whole purpose is logging more food — the natural next thing to
+    // do is log another meal, not sit here. Brief pause so "Saved." is
+    // actually readable, then reset straight back to a fresh entry
+    // (still on this screen, not the dashboard — see resetAddFoodScreen_).
+    setTimeout(() => {
+      if (!el_('screen-addfood')?.hidden) resetAddFoodScreen_();
+    }, 1200);
   } catch (err) {
     if (saveErrorEl) { saveErrorEl.textContent = humanizeErrorMessage_(err.message); saveErrorEl.hidden = false; }
     btn.disabled = false;
@@ -2270,7 +2346,7 @@ function renderSetRow_(exercise, set) {
   completeBtn.type = 'button';
   completeBtn.className = 'set-complete-btn';
   completeBtn.textContent = '✓';
-  completeBtn.addEventListener('click', () => toggleSetComplete_(exercise, set));
+  completeBtn.addEventListener('click', () => toggleSetComplete_(exercise, set, completeBtn));
   row.appendChild(completeBtn);
 
   return row;
@@ -2283,7 +2359,21 @@ function renderSetRow_(exercise, set) {
  * duplicate (see Workouts.gs's handleLogSet_/findWorkoutSetRowIndex_).
  * Starts the rest timer only when COMPLETING a set, never on undo.
  */
-async function toggleSetComplete_(exercise, set) {
+async function toggleSetComplete_(exercise, set, btn) {
+  // Every other async button in this app (Save, Analyze, Finish
+  // Workout...) disables itself and shows a pending label while its
+  // request is in flight — this one never did, so a slow/cold-start
+  // backend call (see api.js's 25s timeout) left the checkmark looking
+  // completely inert for however long that took: a real-device report
+  // of "the save button isn't working" turned out to be exactly this —
+  // it WAS working, there was just zero feedback that anything was
+  // happening, and nothing stopped a second, third, fourth tap from
+  // firing more concurrent requests for the same set in the meantime.
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '…';
+  }
   const nextCompleted = !set.completed;
   const errorEl = el_('workout-error');
   if (errorEl) errorEl.hidden = true;
@@ -2302,7 +2392,7 @@ async function toggleSetComplete_(exercise, set) {
     set.completed = nextCompleted;
     set.isPR = nextCompleted ? !!result.isPR : false;
     if (nextCompleted) startRestTimer_(exercise.defaultRestSec);
-    renderWorkoutScreen_();
+    renderWorkoutScreen_(); // rebuilds this button fresh (not disabled) on success
   } catch (err) {
     // A real-device report of "tapping the checkmark does nothing" was
     // this error firing correctly but rendering off-screen, below
@@ -2311,6 +2401,7 @@ async function toggleSetComplete_(exercise, set) {
     // message, runMigrationAddWorkoutTracking() likely hasn't been run
     // yet on the live spreadsheet (see DESIGN.md section 19/21).
     showAndRevealError_(errorEl, err.message);
+    if (btn) { btn.disabled = false; btn.textContent = '✓'; }
   }
 }
 
@@ -2513,8 +2604,21 @@ function renderCoachMessage_(message, date) {
 }
 
 function scrollCoachToBottom_() {
-  const messagesEl = el_('coach-messages');
-  if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+  // #coach-messages' own overflow-y:auto never actually kicks in — its
+  // parent (#screen-coach, inside #app) has no bounded height, so the
+  // div simply grows to fit every message and the PAGE scrolls instead
+  // (same root cause already noted above for why the input bar needed
+  // position:fixed, not sticky: there's no scrolling ancestor here).
+  // Setting messagesEl.scrollTop was therefore a no-op — real-device
+  // report: opening Coach always showed the top of the conversation,
+  // requiring a manual scroll down every single time. Scroll the
+  // actual scrolling element instead. requestAnimationFrame ensures
+  // this runs after the browser has laid out whatever was just
+  // appended, not mid-mutation.
+  requestAnimationFrame(() => {
+    const scroller = document.scrollingElement || document.documentElement;
+    scroller.scrollTop = scroller.scrollHeight;
+  });
 }
 
 document.getElementById('coach-form')?.addEventListener('submit', async (e) => {
