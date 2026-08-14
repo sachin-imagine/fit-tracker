@@ -191,10 +191,10 @@
     </div>
     <div class="notice-card">
       <strong>Welcome back, <span class="welcome-name"></span>.</strong>
-      <p>Food photo logging, workout tracking, and the AI coach arrive in later phases. This screen will fill in as each phase ships.</p>
+      <p>Scan or add your meals, log a workout, check your form on camera, and ask your coach anything — everything below stays in sync with your own numbers.</p>
     </div>
     <div class="quick-actions">
-      <button class="quick-btn" id="quick-addfood-btn" type="button">📸<span>Add Food</span></button>
+      <button class="quick-btn" id="quick-addfood-btn" type="button">🥗<span>Add Diet</span></button>
       <button class="quick-btn" id="quick-workout-btn" type="button">🏋️<span>Log Workout</span></button>
       <button class="quick-btn" id="quick-formcheck-btn" type="button">🎥<span>Form Check</span></button>
       <button class="quick-btn" disabled>⚖️<span>Log Weight</span></button>
@@ -260,15 +260,21 @@
     <video id="formcheck-video-el" style="display:none" muted playsinline></video>
     <canvas id="formcheck-canvas-el" style="display:none"></canvas>
   </section>
-  <!-- SCREEN: Add Food (Phase 2, Slice 2) — photo -> Gemini proposal ->
-       user reviews/edits the estimated quantity of every item (this is
-       never auto-saved) -> confirm -> Meals.gs saves it. See DESIGN.md
-       section 15 and app.js's ADDFOOD_ comments. -->
+  <!-- SCREEN: Add Diet (was "Add Food") — two ways in: scan a photo
+       (photo -> Gemini proposal -> user reviews/edits the estimated
+       quantity of every item) or add an item by hand (typed straight
+       into the same review list). Neither path auto-saves — Meals.gs
+       only ever writes what the user confirms. See DESIGN.md section
+       15 and app.js's ADDFOOD_ comments. -->
   <section id="screen-addfood" class="screen" hidden>
     <header class="screen-header">
-      <h1>Add Food</h1>
-      <p class="subtitle">Take or pick a photo of your meal. Your coach will estimate each item's calories, protein, carbs, fat, and fiber — you always get to confirm or correct the portion before anything is saved.</p>
+      <h1>Add Diet</h1>
+      <p class="subtitle">Scan a photo and your coach will estimate the calories, protein, carbs, fat, and fiber — or add an item by hand. Either way, you confirm the numbers before anything is saved.</p>
     </header>
+    <div class="mode-tabs" id="addfood-mode-tabs">
+      <button type="button" class="mode-tab active" id="addfood-mode-scan-btn" data-mode="scan">📷<span>Scan a photo</span></button>
+      <button type="button" class="mode-tab" id="addfood-mode-manual-btn" data-mode="manual">✍️<span>Add manually</span></button>
+    </div>
     <form id="addfood-capture-form" class="form">
       <label>Meal photo
         <input type="file" id="addfood-photo-input" accept="image/*" required>
@@ -288,12 +294,48 @@
         <textarea name="notes" id="addfood-notes" rows="2" placeholder="e.g. no oil, homemade, half portion already eaten"></textarea>
       </label>
       <p id="addfood-error" class="error-text" hidden></p>
-      <button type="submit" class="btn-primary">Analyze photo</button>
+      <button type="submit" class="btn-primary">Scan photo</button>
+    </form>
+    <!-- "Add manually" — no photo, no AI call. Every field the user
+         types goes straight into the SAME review list the scan path
+         builds (#addfood-items below), so both paths share one
+         confirm-before-saving flow instead of two different ones. -->
+    <form id="addfood-manual-form" class="form" hidden>
+      <label>Food name
+        <input type="text" name="name" id="addfood-manual-name" placeholder="e.g. Grilled chicken breast" required>
+      </label>
+      <label>Meal type
+        <select name="mealType" id="addfood-manual-mealtype">
+          <option value="">Not specified</option>
+          <option>Breakfast</option>
+          <option>Lunch</option>
+          <option>Dinner</option>
+          <option>Snack</option>
+        </select>
+      </label>
+      <div class="macro-input-grid">
+        <label>Calories
+          <input type="number" name="calories" id="addfood-manual-calories" min="0" step="1" required>
+        </label>
+        <label>Protein (g)
+          <input type="number" name="proteinG" id="addfood-manual-protein" min="0" step="0.1" required>
+        </label>
+        <label>Carbs (g)
+          <input type="number" name="carbsG" id="addfood-manual-carbs" min="0" step="0.1" placeholder="0">
+        </label>
+        <label>Fat (g)
+          <input type="number" name="fatG" id="addfood-manual-fat" min="0" step="0.1" placeholder="0">
+        </label>
+      </div>
+      <p class="hint-text">Only calories and protein are required — leave carbs/fat blank if you don't know them.</p>
+      <p id="addfood-manual-error" class="error-text" hidden></p>
+      <button type="submit" class="btn-primary">Add item</button>
     </form>
     <button type="button" class="btn-secondary" id="addfood-back-btn">Back to Today</button>
-    <!-- Filled in by app.js once analyzeFood returns; hidden until then. -->
+    <!-- Filled in by app.js once a photo is analyzed OR a manual item
+         is added; hidden until the first item exists. -->
     <div id="addfood-review" class="formcheck-report" hidden>
-      <div class="notice-card">
+      <div class="notice-card" id="addfood-confidence-card">
         <strong>Confidence: <span id="addfood-confidence"></span></strong>
         <p id="addfood-coachnote"></p>
       </div>
@@ -394,7 +436,7 @@
        as a cold start — see DESIGN.md section 21. -->
   <section id="screen-coach" class="screen" hidden>
     <header class="screen-header">
-      <h1>Coach</h1>
+      <h1><span class="coach-header-icon" aria-hidden="true">💪</span> Coach</h1>
       <p class="subtitle">Your personal trainer — knows your goals, your recent weigh-ins, and your recent workouts.</p>
     </header>
     <div id="coach-history-loading" class="exercise-loading" hidden>
@@ -440,10 +482,10 @@
     </div>
     <div class="profile-summary-header">
       <span class="field-label">Your fitness profile</span>
-      <button type="button" id="edit-profile-btn" class="icon-btn" aria-label="Edit profile" title="Edit profile">✏️ Edit</button>
+      <button type="button" id="edit-profile-btn" class="icon-btn" aria-label="Edit profile" title="Edit profile">✏️</button>
     </div>
     <dl id="profile-summary" class="profile-summary"></dl>
-    <button type="button" class="btn-secondary signout-btn">Log out</button>
+    <button type="button" class="btn-secondary signout-btn profile-logout-btn">🚪<span>Log out</span></button>
   </section>
   <!-- Persistent "Active Workout" resume pill — shown above the bottom
        nav from ANY screen while a workout is in progress and you've
@@ -468,7 +510,7 @@
       <span>📈</span><small>History</small>
     </button>
     <button class="nav-btn" data-screen="screen-coach">
-      <span>🤖</span><small>Coach</small>
+      <span>💪</span><small>Coach</small>
     </button>
     <button class="nav-btn" data-screen="screen-profile">
       <span>👤</span><small>Profile</small>

@@ -192,6 +192,48 @@ textarea { resize: vertical; }
 
 .quick-btn[disabled] { opacity: 0.4; }
 
+/* Add Diet: "Scan a photo" vs "Add manually" — a simple two-tab
+   switcher, same visual language as the nav (active = accent-colored)
+   so it reads as "pick one of two modes", not two separate buttons. */
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.mode-tab {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  color: var(--text-dim);
+  border-radius: 12px;
+  padding: 12px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.mode-tab span { font-size: 12px; }
+
+.mode-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Manual food entry — calories/protein required, carbs/fat optional,
+   laid out two-per-row so the form doesn't read as a long vertical
+   list of near-identical number fields. */
+.macro-input-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.macro-input-grid label { margin: 0; }
+
 .profile-dump {
   background: var(--surface);
   border-radius: var(--radius);
@@ -595,18 +637,34 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* Shared small pencil-icon button — used for both the name editor and
-   the "Edit profile" entry point above the profile-summary block. */
+   the "Edit profile" entry point above the profile-summary block.
+   Given a real circular chip (not just bare emoji text floating next
+   to a label) so it reads as a proper tappable button — a real-device
+   report specifically called the old bare-text version out as looking
+   unfinished. Both edit buttons are icon-only now (the "Edit profile"
+   button used to also carry an "Edit" text label; dropped for
+   consistency with the name editor's icon-only pencil — aria-label/
+   title still name it for accessibility). */
 .icon-btn {
-  background: none;
+  background: var(--surface-2);
   border: none;
-  color: var(--text-dim);
-  font-size: 14px;
+  color: var(--text);
+  font-size: 15px;
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
 
-.icon-btn:active { background: var(--surface-2); }
+.icon-btn:active {
+  background: var(--surface);
+  transform: scale(0.92);
+}
 
 .profile-summary-header {
   display: flex;
@@ -618,6 +676,41 @@ input:focus, select:focus, textarea:focus {
 .success-text {
   color: var(--accent);
   font-size: 14px;
+}
+
+/* Profile screen: anchor Log out deliberately at the bottom of the
+   screen (a flex column with the button pushed down via margin-top:
+   auto) instead of letting it just trail off wherever the profile
+   card happens to end, with a lot of empty space beneath it — that
+   used to look unfinished/accidental rather than intentional. Also
+   recolored from a generic gray secondary button into a clearly
+   "leave" action (danger-tinted outline, a door icon, not full width)
+   so it doesn't read as just another form button. */
+#screen-profile {
+  display: flex;
+  flex-direction: column;
+}
+
+#screen-profile .profile-logout-btn {
+  margin-top: auto;
+  align-self: center;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: none;
+  font-weight: 600;
+}
+
+/* Coach screen header icon — a small identity marker next to the
+   "Coach" title so the tab reads as a trainer persona, not a generic
+   robot/assistant icon (the bottom-nav icon was swapped the same way —
+   see .nav-btn usage in index.html). */
+.coach-header-icon {
+  display: inline-block;
 }
 
 /* Form Check screen (Phase 2, Slice 1, checkpoint 1) — reuses
