@@ -196,7 +196,7 @@
     <div class="quick-actions">
       <button class="quick-btn" id="quick-addfood-btn" type="button">🥗<span>Add Diet</span></button>
       <button class="quick-btn" id="quick-workout-btn" type="button">🏋️<span>Log Workout</span></button>
-      <button class="quick-btn" id="quick-formcheck-btn" type="button">🎥<span>Form Check</span></button>
+      <button class="quick-btn" id="quick-formcheck-btn" type="button">📐<span>Form Check</span></button>
       <button class="quick-btn" disabled>⚖️<span>Log Weight</span></button>
     </div>
   </section>
@@ -207,8 +207,8 @@
        FORMCHECK_/runPoseAnalysis_ comments. -->
   <section id="screen-formcheck" class="screen" hidden>
     <header class="screen-header">
-      <h1>Form Check</h1>
-      <p class="subtitle">Pick a short clip — we'll auto-detect your reps on-device (no upload of the raw video) and send your coach a few key frames. This can take up to 20-30s for a longer clip; if auto-detection isn't available on this device, we'll ask you to enter your rep count instead.</p>
+      <h1><span class="formcheck-header-icon" aria-hidden="true">📐</span> Form Check</h1>
+      <p class="subtitle">Record one rep, and your coach checks your form frame-by-frame — reps are auto-counted on your device (nothing raw is uploaded), so this stays fast and private.</p>
     </header>
     <form id="formcheck-form" class="form">
       <label>Exercise
@@ -219,7 +219,7 @@
       <label>Video clip
         <input type="file" id="formcheck-video-input" accept="video/*" required>
       </label>
-      <p class="hint-text">Pick this from your camera roll, or record a new clip — your phone will offer both.</p>
+      <p class="hint-text">Keep it under 60 seconds — one clean rep is all your coach needs. Pick this from your camera roll, or record a new clip; your phone will offer both.</p>
       <p id="formcheck-video-status" class="subtitle" hidden></p>
       <p id="formcheck-fallback-notice" class="notice-text" hidden>Automatic rep detection wasn't available — enter your rep count below and try again.</p>
       <label id="formcheck-repcount-field" hidden>How many reps did you do?
@@ -496,6 +496,7 @@
        screen-workout; the ✕ discards the workout without finishing it. -->
   <div id="active-workout-pill" class="active-workout-pill" hidden>
     <button type="button" id="active-workout-resume-btn" class="active-workout-resume-btn">
+      <span class="active-workout-pill-dot" aria-hidden="true"></span>
       <span class="active-workout-pill-label">Active Workout</span>
       <span class="active-workout-pill-time" id="active-workout-pill-time">0:00</span>
     </button>
@@ -504,10 +505,10 @@
   <!-- Bottom navigation -->
   <nav class="bottom-nav" id="bottom-nav" hidden>
     <button class="nav-btn active" data-screen="screen-dashboard">
-      <span>🏠</span><small>Today</small>
+      <span>🔥</span><small>Today</small>
     </button>
     <button class="nav-btn" data-screen="screen-log">
-      <span>📈</span><small>History</small>
+      <span>📅</span><small>History</small>
     </button>
     <button class="nav-btn" data-screen="screen-coach">
       <span>💪</span><small>Coach</small>

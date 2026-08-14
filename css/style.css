@@ -112,6 +112,7 @@ textarea { resize: vertical; }
   padding: 15px;
   border-radius: 14px;
   cursor: pointer;
+  transition: transform 0.12s ease;
 }
 
 .btn-primary:active { transform: scale(0.98); }
@@ -324,6 +325,23 @@ textarea { resize: vertical; }
   color: var(--text-dim);
 }
 
+/* A small "recording" dot — the pill already says "Active Workout" in
+   words, but a live pulse is what actually reads as "this is happening
+   right now" at a glance, the way a recording indicator does. */
+.active-workout-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: livePulse 1.6s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(74, 222, 128, 0); }
+}
+
 .active-workout-pill-time {
   font-size: 15px;
   font-weight: 700;
@@ -371,6 +389,21 @@ textarea { resize: vertical; }
 .nav-btn.active { color: var(--accent); }
 .nav-btn[disabled] { opacity: 0.35; }
 .nav-btn small { font-size: 11px; }
+
+/* A quick pop on the icon of whichever tab just became active — cheap,
+   purely cosmetic feedback that a tap landed, replaying every time
+   .active moves to a different button (app.js's showScreen swaps the
+   class between buttons on every navigation). */
+.nav-btn.active span:first-child {
+  display: inline-block;
+  animation: navIconPop 0.28s ease-out;
+}
+
+@keyframes navIconPop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
 
 /* Sign-in / loading / verify / pending / rejected screens */
 .screen-center {
@@ -457,6 +490,7 @@ input:focus, select:focus, textarea:focus {
   80% { transform: translateX(2px); }
 }
 
+.btn-secondary { transition: transform 0.12s ease; }
 .btn-secondary:active { transform: scale(0.97); }
 
 /* App-wide startup loading indicator (screen-loading) — same bouncing
@@ -691,18 +725,35 @@ input:focus, select:focus, textarea:focus {
   flex-direction: column;
 }
 
+/* Second real-device pass: an outline-only button (transparent fill,
+   thin border) read as thin/washed-out against this dark theme rather
+   than a deliberate "leave" action, and its padding didn't match the
+   comfortable size other CTAs use. Given a soft tinted fill instead of
+   a bare outline, and the same border-radius/vertical rhythm as the
+   rest of the app's buttons, so it reads as one consistent size/shape
+   language with a color that's clearly "this one is different" without
+   clashing. */
 #screen-profile .profile-logout-btn {
   margin-top: auto;
+  margin-bottom: 4px;
   align-self: center;
   width: auto;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 12px 28px;
-  border: 1px solid var(--danger);
+  padding: 13px 30px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: var(--radius);
+  background: rgba(248, 113, 113, 0.12);
   color: var(--danger);
-  background: none;
   font-weight: 600;
+  font-size: 15px;
+}
+
+#screen-profile .profile-logout-btn:active {
+  background: rgba(248, 113, 113, 0.22);
+  transform: scale(0.97);
 }
 
 /* Coach screen header icon — a small identity marker next to the
@@ -710,6 +761,13 @@ input:focus, select:focus, textarea:focus {
    robot/assistant icon (the bottom-nav icon was swapped the same way —
    see .nav-btn usage in index.html). */
 .coach-header-icon {
+  display: inline-block;
+}
+
+/* Form Check screen header icon — same treatment as .coach-header-icon
+   above, replacing a literal camera emoji (read as "just a video
+   upload") with something that reads as "checking your form/angles". */
+.formcheck-header-icon {
   display: inline-block;
 }
 
@@ -1130,11 +1188,31 @@ input:focus, select:focus, textarea:focus {
 
 .exercise-picker-custom {
   display: flex;
+  align-items: stretch;
   gap: 8px;
   margin-bottom: 10px;
 }
 
-.exercise-picker-custom input { flex: 1; }
+.exercise-picker-custom input {
+  flex: 1;
+  /* Flex items default to min-width:auto, which lets a text input's
+     intrinsic content width refuse to shrink below its placeholder's
+     natural size — on a narrow phone screen that shoved the Add
+     button into an uneven, differently-sized pill next to it instead
+     of the two lining up cleanly. min-width:0 lets it actually honor
+     flex:1 and shrink to the space really available. */
+  min-width: 0;
+}
+
+.exercise-picker-custom .btn-compact {
+  flex-shrink: 0;
+  /* Match the input's font-size/line-height exactly (rather than
+     .btn-secondary's smaller default) so align-items:stretch produces
+     two controls of the identical height, not one a couple of pixels
+     shorter than the other. */
+  font-size: 16px;
+  padding: 12px 20px;
+}
 
 /* --- Workout History screen ------------------------------------------ */
 .workout-history-list {
@@ -1199,12 +1277,27 @@ input:focus, select:focus, textarea:focus {
 
 .coach-msg {
   max-width: 82%;
+  display: flex;
+  flex-direction: column;
   padding: 10px 13px;
   border-radius: 16px;
   font-size: 14px;
   line-height: 1.4;
-  white-space: pre-wrap;
   animation: screenEnter 0.18s ease-out;
+}
+
+.coach-msg-text {
+  white-space: pre-wrap;
+}
+
+/* Per-message timestamp — WhatsApp-style, so it's obvious at a glance
+   when each side of the conversation actually happened, not just the
+   order things appear in. */
+.coach-msg-time {
+  align-self: flex-end;
+  font-size: 10px;
+  opacity: 0.65;
+  margin-top: 3px;
 }
 
 .coach-msg-user {
@@ -1219,6 +1312,19 @@ input:focus, select:focus, textarea:focus {
   background: var(--surface);
   color: var(--text);
   border-bottom-left-radius: 4px;
+}
+
+/* Date divider between message groups — same "Today"/"Yesterday"/
+   weekday pattern as WhatsApp's own chat view. */
+.coach-date-divider {
+  align-self: center;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  margin: 6px 0;
 }
 
 .coach-typing {
