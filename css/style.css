@@ -157,6 +157,40 @@ textarea { resize: vertical; }
   font-weight: 700;
 }
 
+.stat-card-water {
+  grid-column: 1 / -1;
+}
+
+.water-quick-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.water-add-btn {
+  flex: 1;
+  background: var(--surface-2);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.water-add-btn:active {
+  transform: scale(0.96);
+  background: var(--accent);
+  color: #fff;
+}
+
+.water-add-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .notice-card {
   background: var(--surface-2);
   border-radius: var(--radius);
@@ -229,11 +263,19 @@ textarea { resize: vertical; }
    list of near-identical number fields. */
 .macro-input-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px 14px;
 }
 
-.macro-input-grid label { margin: 0; }
+.macro-input-grid label { margin: 0; min-width: 0; }
+
+/* Grid items (and flex items) default to min-width:auto, which lets a
+   number input's intrinsic content width refuse to shrink below its
+   natural size — on a real device this pushed the second column's
+   input clean off the right edge of the screen instead of respecting
+   its 1fr track. min-width:0 on both the label AND the input itself
+   is what actually makes them honor the grid column. */
+.macro-input-grid input { min-width: 0; }
 
 .profile-dump {
   background: var(--surface);
@@ -1019,9 +1061,9 @@ input:focus, select:focus, textarea:focus {
 
 .set-row {
   display: grid;
-  grid-template-columns: 34px 1fr 64px 56px 34px;
+  grid-template-columns: 30px minmax(0, 1fr) 56px 48px 30px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 4px 0 4px 8px;
   border-left: 3px solid transparent;
   border-radius: 6px;
@@ -1050,9 +1092,12 @@ input:focus, select:focus, textarea:focus {
 }
 
 .set-weight-input, .set-reps-input {
-  padding: 8px 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 4px;
   text-align: center;
   font-size: 14px;
+  border-radius: 8px;
 }
 
 .set-number-badge {
@@ -1083,6 +1128,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .set-complete-btn:active { transform: scale(0.85); }
+.set-complete-btn[disabled] { opacity: 0.5; cursor: default; }
 
 .set-row.set-completed .set-complete-btn {
   background: var(--accent);

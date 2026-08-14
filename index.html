@@ -184,11 +184,17 @@
         <span class="stat-label">Protein</span>
         <span class="stat-value" id="stat-protein">– / –</span>
       </div>
-      <div class="stat-card">
+      <div class="stat-card stat-card-water">
         <span class="stat-label">Water</span>
         <span class="stat-value" id="stat-water">– / –</span>
+        <div class="water-quick-add" role="group" aria-label="Log water intake">
+          <button type="button" class="water-add-btn" data-ml="250">+250ml</button>
+          <button type="button" class="water-add-btn" data-ml="500">+500ml</button>
+          <button type="button" class="water-add-btn" data-ml="1000">+1L</button>
+        </div>
       </div>
     </div>
+    <p id="dashboard-error" class="error-text" hidden></p>
     <div class="notice-card">
       <strong>Welcome back, <span class="welcome-name"></span>.</strong>
       <p>Scan or add your meals, log a workout, check your form on camera, and ask your coach anything — everything below stays in sync with your own numbers.</p>
@@ -196,7 +202,7 @@
     <div class="quick-actions">
       <button class="quick-btn" id="quick-addfood-btn" type="button">🥗<span>Add Diet</span></button>
       <button class="quick-btn" id="quick-workout-btn" type="button">🏋️<span>Log Workout</span></button>
-      <button class="quick-btn" id="quick-formcheck-btn" type="button">📐<span>Form Check</span></button>
+      <button class="quick-btn" id="quick-formcheck-btn" type="button">🔍<span>Form Check</span></button>
       <button class="quick-btn" disabled>⚖️<span>Log Weight</span></button>
     </div>
   </section>
@@ -207,7 +213,7 @@
        FORMCHECK_/runPoseAnalysis_ comments. -->
   <section id="screen-formcheck" class="screen" hidden>
     <header class="screen-header">
-      <h1><span class="formcheck-header-icon" aria-hidden="true">📐</span> Form Check</h1>
+      <h1><span class="formcheck-header-icon" aria-hidden="true">🔍</span> Form Check</h1>
       <p class="subtitle">Record one rep, and your coach checks your form frame-by-frame — reps are auto-counted on your device (nothing raw is uploaded), so this stays fast and private.</p>
     </header>
     <form id="formcheck-form" class="form">
@@ -269,68 +275,78 @@
   <section id="screen-addfood" class="screen" hidden>
     <header class="screen-header">
       <h1>Add Diet</h1>
-      <p class="subtitle">Scan a photo and your coach will estimate the calories, protein, carbs, fat, and fiber — or add an item by hand. Either way, you confirm the numbers before anything is saved.</p>
+      <p class="subtitle" id="addfood-subtitle">Scan a photo and your coach will estimate the calories, protein, carbs, fat, and fiber — or add an item by hand. Either way, you confirm the numbers before anything is saved.</p>
     </header>
-    <div class="mode-tabs" id="addfood-mode-tabs">
-      <button type="button" class="mode-tab active" id="addfood-mode-scan-btn" data-mode="scan">📷<span>Scan a photo</span></button>
-      <button type="button" class="mode-tab" id="addfood-mode-manual-btn" data-mode="manual">✍️<span>Add manually</span></button>
-    </div>
-    <form id="addfood-capture-form" class="form">
-      <label>Meal photo
-        <input type="file" id="addfood-photo-input" accept="image/*" required>
-      </label>
-      <p class="hint-text">Pick this from your photo library, or take a new one — your phone will offer both.</p>
-      <p id="addfood-photo-status" class="subtitle" hidden></p>
-      <label>Meal type
-        <select name="mealType" id="addfood-mealtype">
-          <option value="">Not specified</option>
-          <option>Breakfast</option>
-          <option>Lunch</option>
-          <option>Dinner</option>
-          <option>Snack</option>
-        </select>
-      </label>
-      <label>Notes (optional)
-        <textarea name="notes" id="addfood-notes" rows="2" placeholder="e.g. no oil, homemade, half portion already eaten"></textarea>
-      </label>
-      <p id="addfood-error" class="error-text" hidden></p>
-      <button type="submit" class="btn-primary">Scan photo</button>
-    </form>
-    <!-- "Add manually" — no photo, no AI call. Every field the user
-         types goes straight into the SAME review list the scan path
-         builds (#addfood-items below), so both paths share one
-         confirm-before-saving flow instead of two different ones. -->
-    <form id="addfood-manual-form" class="form" hidden>
-      <label>Food name
-        <input type="text" name="name" id="addfood-manual-name" placeholder="e.g. Grilled chicken breast" required>
-      </label>
-      <label>Meal type
-        <select name="mealType" id="addfood-manual-mealtype">
-          <option value="">Not specified</option>
-          <option>Breakfast</option>
-          <option>Lunch</option>
-          <option>Dinner</option>
-          <option>Snack</option>
-        </select>
-      </label>
-      <div class="macro-input-grid">
-        <label>Calories
-          <input type="number" name="calories" id="addfood-manual-calories" min="0" step="1" required>
-        </label>
-        <label>Protein (g)
-          <input type="number" name="proteinG" id="addfood-manual-protein" min="0" step="0.1" required>
-        </label>
-        <label>Carbs (g)
-          <input type="number" name="carbsG" id="addfood-manual-carbs" min="0" step="0.1" placeholder="0">
-        </label>
-        <label>Fat (g)
-          <input type="number" name="fatG" id="addfood-manual-fat" min="0" step="0.1" placeholder="0">
-        </label>
+    <!-- Everything in here collapses to one "+ Add another item" button
+         (#addfood-add-another-btn below) the moment the first item is
+         added — a real-device report said the full picker sitting
+         above the confidence/items card made the screen feel cluttered
+         and pushed the actual results below the fold. Re-expandable, so
+         switching modes to add a second item (photo, then one by hand,
+         or vice versa) still works exactly as before. -->
+    <div id="addfood-picker">
+      <div class="mode-tabs" id="addfood-mode-tabs">
+        <button type="button" class="mode-tab active" id="addfood-mode-scan-btn" data-mode="scan">📷<span>Scan a photo</span></button>
+        <button type="button" class="mode-tab" id="addfood-mode-manual-btn" data-mode="manual">✍️<span>Add manually</span></button>
       </div>
-      <p class="hint-text">Only calories and protein are required — leave carbs/fat blank if you don't know them.</p>
-      <p id="addfood-manual-error" class="error-text" hidden></p>
-      <button type="submit" class="btn-primary">Add item</button>
-    </form>
+      <form id="addfood-capture-form" class="form">
+        <label>Meal photo
+          <input type="file" id="addfood-photo-input" accept="image/*" required>
+        </label>
+        <p class="hint-text">Pick this from your photo library, or take a new one — your phone will offer both.</p>
+        <p id="addfood-photo-status" class="subtitle" hidden></p>
+        <label>Meal type
+          <select name="mealType" id="addfood-mealtype">
+            <option value="">Not specified</option>
+            <option>Breakfast</option>
+            <option>Lunch</option>
+            <option>Dinner</option>
+            <option>Snack</option>
+          </select>
+        </label>
+        <label>Notes (optional)
+          <textarea name="notes" id="addfood-notes" rows="2" placeholder="e.g. no oil, homemade, half portion already eaten"></textarea>
+        </label>
+        <p id="addfood-error" class="error-text" hidden></p>
+        <button type="submit" class="btn-primary">Scan photo</button>
+      </form>
+      <!-- "Add manually" — no photo, no AI call. Every field the user
+           types goes straight into the SAME review list the scan path
+           builds (#addfood-items below), so both paths share one
+           confirm-before-saving flow instead of two different ones. -->
+      <form id="addfood-manual-form" class="form" hidden>
+        <label>Food name
+          <input type="text" name="name" id="addfood-manual-name" placeholder="e.g. Grilled chicken breast" required>
+        </label>
+        <label>Meal type
+          <select name="mealType" id="addfood-manual-mealtype">
+            <option value="">Not specified</option>
+            <option>Breakfast</option>
+            <option>Lunch</option>
+            <option>Dinner</option>
+            <option>Snack</option>
+          </select>
+        </label>
+        <div class="macro-input-grid">
+          <label>Calories
+            <input type="number" name="calories" id="addfood-manual-calories" min="0" step="1" required>
+          </label>
+          <label>Protein (g)
+            <input type="number" name="proteinG" id="addfood-manual-protein" min="0" step="0.1" required>
+          </label>
+          <label>Carbs (g)
+            <input type="number" name="carbsG" id="addfood-manual-carbs" min="0" step="0.1" placeholder="0">
+          </label>
+          <label>Fat (g)
+            <input type="number" name="fatG" id="addfood-manual-fat" min="0" step="0.1" placeholder="0">
+          </label>
+        </div>
+        <p class="hint-text">Only calories and protein are required — leave carbs/fat blank if you don't know them.</p>
+        <p id="addfood-manual-error" class="error-text" hidden></p>
+        <button type="submit" class="btn-primary">Add item</button>
+      </form>
+    </div>
+    <button type="button" class="btn-secondary" id="addfood-add-another-btn" hidden>+ Add another item</button>
     <button type="button" class="btn-secondary" id="addfood-back-btn">Back to Today</button>
     <!-- Filled in by app.js once a photo is analyzed OR a manual item
          is added; hidden until the first item exists. -->
