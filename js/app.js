@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: ux-polish-v3 (Add Diet layout fix + auto-reset after save, macro-input overflow fix, coach auto-scroll-to-bottom fix, Form Check icon, set-row sizing, log-set pending state, water intake logging)');
+console.info('Fit Tracker app.js — build: ux-polish-v4 (humanize "unknown action" stale-deployment errors)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -192,6 +192,15 @@ function humanizeErrorMessage_(rawMessage) {
   // behind one plain message instead of showing raw response text.
   if (/\{\s*"(code|error|message)"|referenceerror|typeerror|sheet not found|run setup|http \d{3}|raw response|internal server error|unexpected token/i.test(msg)) {
     return 'Something went wrong on our end. Please try again in a moment.';
+  }
+  // "Unknown GET/POST action" means the browser is talking to an Apps
+  // Script deployment that predates whatever feature the client just
+  // tried to call — i.e. new pwa code + not-yet-redeployed backend.
+  // This has happened more than once in this project (see DESIGN.md's
+  // deployment notes), so it gets its own message pointing at the
+  // actual fix instead of a generic "try again" that won't help.
+  if (/unknown (get|post) action/i.test(msg)) {
+    return 'This feature isn\'t live on the backend yet — the latest Apps Script version needs to be deployed (Deploy > Manage deployments > New version) before this will work.';
   }
   // Already short, plain-language text we wrote ourselves (client-side
   // validation, or a clean backend validation message) — safe as-is.
