@@ -7,6 +7,16 @@
   --accent: #4ade80;
   --danger: #f87171;
   --radius: 16px;
+  /* Static fallback for the REAL bottom-nav height, which app.js
+     measures via offsetHeight (syncNavHeight_) and writes here as soon
+     as #bottom-nav becomes visible — offsetHeight is 0 while the nav
+     is [hidden], which is why a JS-measured value can't just replace
+     this outright; this fallback covers the brief window before that
+     first measurement and any environment where JS hasn't run yet.
+     Previously two different hardcoded numbers (84px on #app, 74px on
+     .active-workout-pill) stood in for this same concept and drifted
+     out of sync with each other and with the real nav height. */
+  --nav-height: 74px;
 }
 
 * { box-sizing: border-box; }
@@ -34,7 +44,11 @@ html, body {
   max-width: 480px;
   margin: 0 auto;
   min-height: 100vh;
-  padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  /* --nav-height is the real measured nav height (see the --nav-height
+     comment above), which already includes the nav's own
+     env(safe-area-inset-bottom) padding — so it isn't added again
+     here. */
+  padding-bottom: calc(var(--nav-height) + 10px);
   display: flex;
   flex-direction: column;
 }
@@ -232,7 +246,7 @@ textarea { resize: vertical; }
    bottom nav, on top of whatever screen is currently showing. */
 .active-workout-pill {
   position: fixed;
-  bottom: calc(74px + env(safe-area-inset-bottom));
+  bottom: calc(var(--nav-height) + 10px);
   left: 20px;
   right: 20px;
   max-width: 440px;
@@ -1128,13 +1142,27 @@ input:focus, select:focus, textarea:focus {
   animation: exerciseBounce 0.9s ease-in-out infinite;
 }
 
+/* Was `position: sticky`, which only pins an element within a
+   scrolling ANCESTOR — #screen-coach has no such ancestor (the whole
+   page/#app scrolls), so the bar never actually stuck anywhere and
+   rendered wherever it fell in normal flow, i.e. mid-screen. Fixed
+   positioning (matching .active-workout-pill's own floating-bar
+   pattern) is what actually pins it to the viewport. Default position
+   is "just above the bottom nav"; app.js's updateCoachInputBarPosition_
+   shifts it (via an inline `bottom` override) to sit just above the
+   active-workout pill instead, whenever that pill is also visible. */
 .coach-input-row {
+  position: fixed;
+  left: 20px;
+  right: 20px;
+  max-width: 440px;
+  margin: 0 auto;
+  bottom: calc(var(--nav-height) + 10px);
   display: flex;
   gap: 8px;
-  position: sticky;
-  bottom: 0;
-  padding-top: 8px;
+  padding: 8px 0;
   background: var(--bg);
+  z-index: 30; /* stays below .active-workout-pill's z-index 40 during the shift transition */
 }
 
 .coach-input-row input {
@@ -1145,4 +1173,12 @@ input:focus, select:focus, textarea:focus {
   margin-top: 0;
   width: auto;
   padding: 0 20px;
+}
+
+/* Static fallback clearance so the last chat message isn't hidden
+   behind the now-fixed input bar; app.js tops this up dynamically
+   (via #coach-messages' inline padding-bottom) to account for the
+   active-workout pill sitting above the bar when one is in progress. */
+#screen-coach {
+  padding-bottom: 90px;
 }
