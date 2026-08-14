@@ -33,8 +33,13 @@ async function fetchWithTimeout_(url, options) {
     return await fetch(url, Object.assign({}, options, { signal: controller.signal }));
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error('The backend did not respond within ' + (REQUEST_TIMEOUT_MS / 1000) +
-        's. Check your connection and try again — if this keeps happening, check the Apps Script Executions log.');
+      // Full technical detail goes to the console only — the thrown
+      // message is what a non-technical user actually sees (via
+      // humanizeErrorMessage_ in app.js), and it must not mention
+      // "Apps Script" or an "Executions log". The word "timed out" is
+      // deliberate: it's what humanizeErrorMessage_ pattern-matches on.
+      console.error('Request timed out after ' + REQUEST_TIMEOUT_MS + 'ms with no response.', { url: String(url) });
+      throw new Error('The request timed out. Please try again in a moment.');
     }
     throw err;
   } finally {

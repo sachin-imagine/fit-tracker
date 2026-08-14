@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: ux-polish-v1 (human-language errors app-wide, Today calorie/protein tiles wired up, Add Diet manual+scan entry, standardized icons/edit buttons/logout)');
+console.info('Fit Tracker app.js — build: ux-polish-v2 (real exercise icons, Form Check redesign + 60s limit, logout/exercise-add alignment fixes, gym micro-animations, coach chat timestamps + date dividers)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -869,6 +869,16 @@ const FORMCHECK_MAX_FRAME_EDGE_PX_ = 768; // matches Gemini's image-tiling cost 
 const FORMCHECK_FALLBACK_FRACTIONS_ = [0.1, 0.5, 0.9]; // used only if pose detection fails
 const FORMCHECK_POSE_STEP_MS_ = 150; // ~6-7 samples/sec — enough for rep segmentation without being slow
 const FORMCHECK_MAX_POSE_FRAMES_ = 6; // cap on frames actually sent to Gemini (Ai.gs rejects >8)
+// A hard ceiling on how long a Form Check clip can be. Two real
+// reasons, not an arbitrary number: (1) a longer clip means more
+// on-device pose-tracking work and more frames base64-encoded into the
+// Gemini request, which is exactly what pushes a slow phone/network
+// past the 25s request timeout in api.js; (2) Gemini has its own
+// request-size ceiling, and a multi-minute clip risks tripping it
+// outright rather than just being slow. One rep of one exercise fits
+// comfortably in well under a minute, so this is not a real limit on
+// what Form Check can be used for.
+const FORMCHECK_MAX_VIDEO_SEC_ = 60;
 
 // MediaPipe Tasks Vision — verified real API/version this session
 // (see DESIGN.md §14): ESM entry point, version 1.0.1. Loaded lazily
@@ -1004,9 +1014,18 @@ function resetFormCheckScreen_() {
 }
 
 document.getElementById('formcheck-video-input')?.addEventListener('change', (e) => {
+  // Deliberately does NOT probe the video's duration here (e.g. via
+  // loadVideoFile_) — that shares one off-screen <video> element with
+  // the submit handler below, and a person who picks a file then taps
+  // "Analyze form" quickly enough could fire both loads at once,
+  // racing to overwrite each other's onloadedmetadata/src on the same
+  // element. Length enforcement (FORMCHECK_MAX_VIDEO_SEC_) happens once,
+  // authoritatively, in the submit handler instead — see there.
   const statusEl = el_('formcheck-video-status');
+  const errorEl = el_('formcheck-error');
   const file = e.target.files && e.target.files[0];
   if (!statusEl) return;
+  if (errorEl) errorEl.hidden = true;
   if (!file) { statusEl.hidden = true; return; }
   statusEl.hidden = false;
   statusEl.textContent = `Selected: ${file.name} (${Math.round(file.size / 1024)} KB). ` +
@@ -1133,6 +1152,20 @@ document.getElementById('formcheck-form')?.addEventListener('submit', async (e) 
     ({ videoEl, duration, cleanup } = await loadVideoFile_(file));
   } catch (err) {
     if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
+    submitBtn.disabled = false;
+    submitBtn.textContent = idleLabel;
+    return;
+  }
+
+  // Belt-and-suspenders re-check (the file-picker's own change handler
+  // already screens this, but a picked file can only be trusted at the
+  // moment it's actually used) — see FORMCHECK_MAX_VIDEO_SEC_'s comment.
+  if (duration > FORMCHECK_MAX_VIDEO_SEC_) {
+    cleanup();
+    if (errorEl) {
+      showAndRevealError_(errorEl, `That clip is ${Math.round(duration)}s long — please pick one under ` +
+        `${FORMCHECK_MAX_VIDEO_SEC_}s. One rep of the exercise is all that's needed.`);
+    }
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
     return;
@@ -2376,6 +2409,63 @@ function renderHistoryCard_(session) {
 // data instead of treating each visit as a cold start. See DESIGN.md
 // section 21 for the memory-model decision this implements.
 
+// Tracks the calendar date (in the viewer's local timezone) of the
+// most recently appended message/divider, so appendCoachMessageEl_
+// knows when to drop in a new "Today"/"Yesterday"/weekday divider —
+// same visual pattern as WhatsApp's chat view, per the user's own
+// reference screenshot. Reset at the top of every loadCoachHistory_
+// call so re-opening the tab always rebuilds dividers from scratch
+// rather than comparing against whatever was left over from before.
+let coachLastRenderedDateKey_ = null;
+
+function coachDateKey_(date) {
+  return date.getFullYear() + '-' + date.getMonth() + '-' + date.getDate();
+}
+
+// "Today" / "Yesterday" / a weekday name for the last week / a full
+// date beyond that — the same tiering WhatsApp uses for its own date
+// dividers, so this reads as an already-familiar pattern rather than
+// a new one to learn.
+function formatChatDateLabel_(date) {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday - startOfDate) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays > 1 && diffDays < 7) return date.toLocaleDateString(undefined, { weekday: 'long' });
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+  });
+}
+
+function formatChatTimestamp_(date) {
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * Appends one message bubble to the chat, first inserting a date
+ * divider ahead of it whenever its calendar date differs from the
+ * last thing rendered — so a long-running conversation reads in
+ * clearly labeled day groups instead of one undifferentiated scroll of
+ * bubbles with no sense of when anything was actually said.
+ */
+function appendCoachMessageEl_(messagesEl, message, dateOverride) {
+  if (!messagesEl) return;
+  const date = dateOverride || (message.timestamp ? new Date(message.timestamp) : new Date());
+  const key = coachDateKey_(date);
+  if (key !== coachLastRenderedDateKey_) {
+    const divider = document.createElement('div');
+    divider.className = 'coach-date-divider';
+    divider.textContent = formatChatDateLabel_(date);
+    messagesEl.appendChild(divider);
+    coachLastRenderedDateKey_ = key;
+  }
+  messagesEl.appendChild(renderCoachMessage_(message, date));
+}
+
 async function loadCoachHistory_() {
   const loadingEl = el_('coach-history-loading');
   const messagesEl = el_('coach-messages');
@@ -2395,7 +2485,8 @@ async function loadCoachHistory_() {
     const messages = result.messages || [];
     if (messagesEl) {
       messagesEl.innerHTML = '';
-      messages.forEach((m) => messagesEl.appendChild(renderCoachMessage_(m)));
+      coachLastRenderedDateKey_ = null; // rebuilding from scratch — start date-grouping fresh
+      messages.forEach((m) => appendCoachMessageEl_(messagesEl, m));
     }
     if (emptyEl) emptyEl.hidden = messages.length > 0;
     scrollCoachToBottom_();
@@ -2407,10 +2498,17 @@ async function loadCoachHistory_() {
   }
 }
 
-function renderCoachMessage_(message) {
+function renderCoachMessage_(message, date) {
   const bubble = document.createElement('div');
   bubble.className = 'coach-msg ' + (message.role === 'user' ? 'coach-msg-user' : 'coach-msg-coach');
-  bubble.textContent = message.content;
+  const textEl = document.createElement('span');
+  textEl.className = 'coach-msg-text';
+  textEl.textContent = message.content;
+  const timeEl = document.createElement('span');
+  timeEl.className = 'coach-msg-time';
+  timeEl.textContent = formatChatTimestamp_(date || (message.timestamp ? new Date(message.timestamp) : new Date()));
+  bubble.appendChild(textEl);
+  bubble.appendChild(timeEl);
   return bubble;
 }
 
@@ -2438,7 +2536,7 @@ document.getElementById('coach-form')?.addEventListener('submit', async (e) => {
   // saves the user's message server-side BEFORE calling Gemini, so
   // this always matches what actually gets persisted even if the
   // Gemini call itself then fails.
-  if (messagesEl) messagesEl.appendChild(renderCoachMessage_({ role: 'user', content: message }));
+  appendCoachMessageEl_(messagesEl, { role: 'user', content: message });
   if (emptyEl) emptyEl.hidden = true;
   scrollCoachToBottom_();
   input.value = '';
@@ -2448,7 +2546,7 @@ document.getElementById('coach-form')?.addEventListener('submit', async (e) => {
 
   try {
     const result = await apiPost('sendCoachMessage', { message });
-    if (messagesEl) messagesEl.appendChild(renderCoachMessage_({ role: 'coach', content: result.reply }));
+    appendCoachMessageEl_(messagesEl, { role: 'coach', content: result.reply });
     scrollCoachToBottom_();
   } catch (err) {
     showAndRevealError_(errorEl, err.message);
@@ -2484,6 +2582,13 @@ function escapeHtml_(str) {
 // This client-side fallback fixes the SAME symptom immediately without
 // waiting on that migration, by deriving a varied icon from the
 // exercise's own name/muscle group instead of one hardcoded emoji.
+//
+// Second real-device pass: kept in exact sync with Config.gs's
+// deriveExerciseIcon_ — see that file's comment for why the icons
+// changed (no more reusing 🦵 for both Squat and Leg Press, no more
+// ⬇️/🔽 "UI sort arrow"-looking icons, an actual keyword guess for a
+// freshly-typed custom exercise instead of always landing on the bare
+// barbell default).
 const EXERCISE_NAME_ICONS_ = {
   'bench press (barbell)': '🏋️',
   'squat (barbell)': '🦵',
@@ -2491,21 +2596,55 @@ const EXERCISE_NAME_ICONS_ = {
   'overhead press (barbell)': '🙆',
   'barbell row': '🚣',
   'pull-up': '🧗',
-  'push-up': '🤸',
+  'push-up': '🫸',
   'dumbbell curl': '💪',
-  'tricep pushdown': '🔽',
-  'lat pulldown': '⬇️',
-  'leg press': '🦵',
-  'plank': '🧘'
+  'bicep curl': '💪',
+  'hammer curl': '💪',
+  'tricep pushdown': '🦾',
+  'tricep extension': '🦾',
+  'overhead triceps': '🦾',
+  'overhead triceps extension': '🦾',
+  'skull crusher': '🦾',
+  'lat pulldown': '🏹',
+  'leg press': '🦿',
+  'leg curl': '🦿',
+  'leg extension': '🦿',
+  'calf raise': '🦵',
+  'lunges': '🚶',
+  'hip thrust': '🍑',
+  'lateral raise': '🦅',
+  'face pull': '🪢',
+  'plank': '⏱️',
+  'russian twist': '🌀',
+  'crunch': '🌀',
+  'sit-up': '🌀',
+  'cardio': '🏃'
 };
 const MUSCLE_GROUP_ICONS_ = {
-  Chest: '🏋️', Legs: '🦵', Back: '🚣', Shoulders: '🙆', Arms: '💪', Core: '🧘'
+  Chest: '🫸', Legs: '🦵', Back: '🦅', Shoulders: '🙆', Arms: '🦾', Core: '🌀'
 };
+const EQUIPMENT_ICONS_ = {
+  Barbell: '🏋️', Dumbbell: '🏋️‍♀️', Cable: '⛓️', Machine: '⚙️', Bodyweight: '🤸'
+};
+const NAME_KEYWORD_MUSCLE_GROUP_ = [
+  [/curl|tricep|bicep|forearm/i, 'Arms'],
+  [/squat|lunge|leg|calf|quad|hamstring/i, 'Legs'],
+  [/row|pulldown|pull-?up|deadlift|lat\b/i, 'Back'],
+  [/plank|crunch|sit-?up|twist|ab\b|core/i, 'Core'],
+  [/shoulder|press.*overhead|overhead.*press|lateral raise|delt/i, 'Shoulders'],
+  [/bench|chest|push-?up|fly|pushup/i, 'Chest']
+];
+function guessMuscleGroupFromName_(name) {
+  const match = NAME_KEYWORD_MUSCLE_GROUP_.filter((pair) => pair[0].test(name || ''))[0];
+  return match ? match[1] : '';
+}
 function deriveExerciseIcon_(ex) {
   if (ex && ex.iconEmoji) return ex.iconEmoji;
   const key = ex && ex.name ? ex.name.trim().toLowerCase() : '';
   if (EXERCISE_NAME_ICONS_[key]) return EXERCISE_NAME_ICONS_[key];
-  if (ex && ex.muscleGroup && MUSCLE_GROUP_ICONS_[ex.muscleGroup]) return MUSCLE_GROUP_ICONS_[ex.muscleGroup];
+  const muscleGroup = (ex && ex.muscleGroup) || guessMuscleGroupFromName_(ex && ex.name);
+  if (muscleGroup && MUSCLE_GROUP_ICONS_[muscleGroup]) return MUSCLE_GROUP_ICONS_[muscleGroup];
+  if (ex && ex.equipment && EQUIPMENT_ICONS_[ex.equipment]) return EQUIPMENT_ICONS_[ex.equipment];
   return '🏋️';
 }
 
