@@ -13,7 +13,7 @@
 // actually matches what you think you pushed — partial updates
 // across index.html/app.js/api.js are a common source of confusing
 // bugs otherwise.
-console.info('Fit Tracker app.js — build: coach-fixes-v1 (goal-denial fix, coach input bar + active-workout pill positioning via measured --nav-height, workout timer deferred to first exercise pick, capped Gemini history payload)');
+console.info('Fit Tracker app.js — build: ux-polish-v1 (human-language errors app-wide, Today calorie/protein tiles wired up, Add Diet manual+scan entry, standardized icons/edit buttons/logout)');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -150,10 +150,52 @@ function showLoadingError_(message) {
   const spinnerEl = el_('loading-spinner');
   if (spinnerEl) spinnerEl.hidden = true;
   const errorEl = el_('loading-error');
-  if (errorEl) { errorEl.hidden = false; errorEl.textContent = message; }
+  if (errorEl) { errorEl.hidden = false; errorEl.textContent = humanizeErrorMessage_(message); }
   const retryEl = el_('loading-retry-btn');
   if (retryEl) retryEl.hidden = false;
   showScreen('screen-loading');
+}
+
+/**
+ * Turns a raw error message — which might be our own short, already
+ * plain-language validation text ("Type an exercise name first."), or
+ * might be a backend/Gemini/network failure carrying technical detail
+ * nobody outside this codebase should have to read (HTTP status
+ * codes, "UNAVAILABLE", a raw JSON error blob, a sheet/stack-trace
+ * message) — into something a non-technical person can act on. This
+ * app is used by everyday people, not developers, so nothing shown on
+ * screen should ever look like debug output. Real detail still reaches
+ * the browser console (every catch block that calls this also had, or
+ * still has, its own console.error/console.warn) for whoever needs to
+ * actually debug it.
+ */
+function humanizeErrorMessage_(rawMessage) {
+  const msg = String(rawMessage || '');
+  if (/503|UNAVAILABLE|overloaded|high demand|rate limit|429/i.test(msg)) {
+    return 'We\'re getting a lot of requests right now. Please try again in a few minutes.';
+  }
+  if (/timeout|timed out|abort|failed to fetch|network|offline/i.test(msg)) {
+    return 'That\'s taking longer than expected. Please check your internet connection and try again.';
+  }
+  // Deliberately specific phrases, not the bare word "session" — this
+  // app has an unrelated, perfectly legitimate "Workout Sessions"
+  // concept, and a generic /session/i match was misfiring on THAT
+  // ("Sheet not found: Workout Sessions...") and showing a wrong
+  // "please sign in again" message for what was really a backend/setup
+  // error.
+  if (/session (expired|invalid|has ended)|unauthorized|not signed in|no valid session token|401\b|403\b/i.test(msg)) {
+    return 'Your session has ended. Please sign in again.';
+  }
+  // Looks like a raw technical/system error — a JSON error blob, a
+  // stack-trace class name, an HTTP status, an internal sheet/setup
+  // detail — rather than something written for a person. Hide it
+  // behind one plain message instead of showing raw response text.
+  if (/\{\s*"(code|error|message)"|referenceerror|typeerror|sheet not found|run setup|http \d{3}|raw response|internal server error|unexpected token/i.test(msg)) {
+    return 'Something went wrong on our end. Please try again in a moment.';
+  }
+  // Already short, plain-language text we wrote ourselves (client-side
+  // validation, or a clean backend validation message) — safe as-is.
+  return msg || 'Something went wrong. Please try again.';
 }
 
 document.getElementById('loading-retry-btn').addEventListener('click', () => {
@@ -266,7 +308,7 @@ document.getElementById('signin-form').addEventListener('submit', async (e) => {
   } catch (err) {
     if (sendingNotice) sendingNotice.hidden = true;
     if (verifyErrorEl) {
-      verifyErrorEl.textContent = 'Could not send the code: ' + err.message;
+      verifyErrorEl.textContent = humanizeErrorMessage_(err.message);
       verifyErrorEl.hidden = false;
     }
     if (resendBtn) { resendBtn.disabled = false; resendBtn.textContent = 'Resend code'; }
@@ -301,7 +343,7 @@ document.getElementById('verify-form').addEventListener('submit', async (e) => {
     showLoading_('Setting things up…');
     await runAuthCheck();
   } catch (err) {
-    errorEl.textContent = err.message;
+    errorEl.textContent = humanizeErrorMessage_(err.message);
     errorEl.hidden = false;
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
@@ -320,7 +362,7 @@ document.getElementById('resend-code-btn').addEventListener('click', async () =>
     await apiGet('requestLoginCode', { email: pendingEmail });
     startResendCooldown_(btn, RESEND_COOLDOWN_SECONDS, 'Resend code');
   } catch (err) {
-    errorEl.textContent = err.message;
+    errorEl.textContent = humanizeErrorMessage_(err.message);
     errorEl.hidden = false;
     if (/wait/i.test(err.message)) {
       startResendCooldown_(btn, RESEND_COOLDOWN_SECONDS, 'Resend code');
@@ -376,7 +418,7 @@ document.getElementById('remind-approver-btn').addEventListener('click', async (
     noticeEl.hidden = false;
     startReminderCooldown_(btn, (result && result.cooldownSeconds) || 300, idleLabel);
   } catch (err) {
-    errorEl.textContent = err.message;
+    errorEl.textContent = humanizeErrorMessage_(err.message);
     errorEl.hidden = false;
     if (/wait/i.test(err.message)) {
       // The backend enforces its own cooldown too — reflect the
@@ -480,6 +522,37 @@ async function enterAppShell_(profile) {
     renderWeeklySummary_(weeklySummary);
   } catch (err) {
     console.error(err);
+  }
+  await refreshTodaySummary_();
+}
+
+/**
+ * Populates the Calories/Protein dashboard tiles from today's actually-
+ * logged meals. A real-device report: these tiles kept showing "– / –"
+ * even right after logging food — handleSaveMeal_ always wrote real
+ * totals per meal, nothing on the dashboard ever read them back. Called
+ * once when the dashboard loads and again right after a meal is saved
+ * (see the addfood-save handler) so the numbers update the moment you
+ * log something, not just on the next full app load.
+ */
+async function refreshTodaySummary_() {
+  const caloriesEl = el_('stat-calories');
+  const proteinEl = el_('stat-protein');
+  try {
+    const { todaySummary } = await apiGet('getTodaySummary');
+    if (caloriesEl) {
+      caloriesEl.textContent = todaySummary.mealsLoggedToday > 0
+        ? `${todaySummary.caloriesToday} kcal` : '–';
+    }
+    if (proteinEl) {
+      proteinEl.textContent = todaySummary.mealsLoggedToday > 0
+        ? `${todaySummary.proteinGToday}g` : '–';
+    }
+  } catch (err) {
+    // Non-critical to the rest of the dashboard rendering — leave the
+    // tiles at their "–" default and log for debugging rather than
+    // interrupting the whole screen over a stats-tile fetch failing.
+    console.error('Could not load today\'s food summary:', err);
   }
 }
 
@@ -617,7 +690,7 @@ document.getElementById('save-name-btn')?.addEventListener('click', async () => 
     // currentUser (which only has {email, name, status}) into
     // renderProfile would have blanked out the profile dump instead.
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message || 'Save failed.'; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message || 'Save failed.'); errorEl.hidden = false; }
   } finally {
     btn.disabled = false;
     btn.textContent = idleLabel;
@@ -732,7 +805,7 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
   try {
     await apiPost('saveProfile', payload);
   } catch (err) {
-    errorEl.textContent = 'Could not save profile: ' + err.message;
+    errorEl.textContent = 'Could not save your profile — ' + humanizeErrorMessage_(err.message);
     errorEl.hidden = false;
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
@@ -753,7 +826,7 @@ document.getElementById('setup-form').addEventListener('submit', async (e) => {
     }
   } catch (err) {
     console.error('Profile saved, but refreshing the view afterward failed:', err);
-    errorEl.textContent = 'Profile saved. Reload the app to see the update — (' + err.message + ')';
+    errorEl.textContent = 'Your profile was saved. Please reload the app to see the update.';
     errorEl.hidden = false;
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
@@ -1059,7 +1132,7 @@ document.getElementById('formcheck-form')?.addEventListener('submit', async (e) 
   try {
     ({ videoEl, duration, cleanup } = await loadVideoFile_(file));
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
     return;
@@ -1088,8 +1161,8 @@ document.getElementById('formcheck-form')?.addEventListener('submit', async (e) 
       const repField = el_('formcheck-repcount-field');
       if (repField) repField.hidden = false;
       if (errorEl) {
-        errorEl.textContent = 'Automatic rep detection wasn\'t available (' + poseErr.message +
-          '). Enter how many reps you did below and hit "Analyze form" again.';
+        errorEl.textContent = 'We couldn\'t automatically count your reps for this clip. ' +
+          'Enter how many reps you did below and hit "Analyze form" again.';
         errorEl.hidden = false;
       }
       submitBtn.disabled = false;
@@ -1116,7 +1189,7 @@ document.getElementById('formcheck-form')?.addEventListener('submit', async (e) 
     const reportEl = el_('formcheck-report');
     if (reportEl) reportEl.hidden = false;
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
@@ -1214,7 +1287,7 @@ document.getElementById('formcheck-save-btn')?.addEventListener('click', async (
     if (saveNoticeEl) saveNoticeEl.hidden = false;
     btn.textContent = 'Saved';
   } catch (err) {
-    if (saveErrorEl) { saveErrorEl.textContent = err.message; saveErrorEl.hidden = false; }
+    if (saveErrorEl) { saveErrorEl.textContent = humanizeErrorMessage_(err.message); saveErrorEl.hidden = false; }
     btn.disabled = false;
     btn.textContent = idleLabel;
   }
@@ -1267,7 +1340,86 @@ function resetAddFoodScreen_() {
   if (saveNoticeEl) saveNoticeEl.hidden = true;
   const saveBtn = el_('addfood-save-btn');
   if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save this meal'; }
+  const manualForm = el_('addfood-manual-form');
+  if (manualForm) { manualForm.reset(); }
+  const manualErrorEl = el_('addfood-manual-error');
+  if (manualErrorEl) manualErrorEl.hidden = true;
+  setAddFoodMode_('scan');
 }
+
+/**
+ * Switches between the two ways into Add Diet — scanning a photo (the
+ * original AI flow) and typing an item in by hand. Both paths feed
+ * the SAME addFoodState_.items/review list, so this only toggles which
+ * capture form is visible; it never touches items already added.
+ */
+function setAddFoodMode_(mode) {
+  const scanForm = el_('addfood-capture-form');
+  const manualForm = el_('addfood-manual-form');
+  const scanTab = el_('addfood-mode-scan-btn');
+  const manualTab = el_('addfood-mode-manual-btn');
+  if (scanForm) scanForm.hidden = mode !== 'scan';
+  if (manualForm) manualForm.hidden = mode !== 'manual';
+  if (scanTab) scanTab.classList.toggle('active', mode === 'scan');
+  if (manualTab) manualTab.classList.toggle('active', mode === 'manual');
+}
+
+document.getElementById('addfood-mode-scan-btn')?.addEventListener('click', () => setAddFoodMode_('scan'));
+document.getElementById('addfood-mode-manual-btn')?.addEventListener('click', () => setAddFoodMode_('manual'));
+
+document.getElementById('addfood-manual-form')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const errorEl = el_('addfood-manual-error');
+  if (errorEl) errorEl.hidden = true;
+
+  const form = new FormData(e.target);
+  const name = (form.get('name') || '').toString().trim();
+  const mealType = (form.get('mealType') || '').toString();
+  const calories = Number(form.get('calories'));
+  const proteinG = Number(form.get('proteinG'));
+  const carbsG = form.get('carbsG') ? Number(form.get('carbsG')) : 0;
+  const fatG = form.get('fatG') ? Number(form.get('fatG')) : 0;
+
+  if (!name) {
+    showAndRevealError_(errorEl, 'Type a food name first.');
+    return;
+  }
+  if (isNaN(calories) || calories < 0 || isNaN(proteinG) || proteinG < 0) {
+    showAndRevealError_(errorEl, 'Enter at least calories and protein for this item.');
+    return;
+  }
+
+  // Everything here shares the SAME item shape the AI-analyzed path
+  // produces (see the addfood-capture-form submit handler above), so
+  // the one review/edit/save UI below works identically regardless of
+  // which door an item came in through. estimatedGrams is a nominal
+  // 100g "baseline" purely so the existing quantity-multiplier math
+  // (×1 = what you typed, ×0.5 = half, etc.) keeps working the same
+  // way it does for a photo-estimated item.
+  if (!addFoodState_.items) {
+    addFoodState_.items = [];
+    addFoodState_.mealType = mealType;
+  }
+  addFoodState_.items.push({
+    name,
+    portionDescription: 'Entered manually',
+    estimatedGrams: 100,
+    calories,
+    proteinG,
+    carbsG,
+    fatG,
+    fiberG: 0,
+    confidence: 'manual',
+    multiplier: 1,
+    removed: false
+  });
+
+  renderAddFoodReview_();
+  const reviewEl = el_('addfood-review');
+  if (reviewEl) reviewEl.hidden = false;
+  e.target.reset();
+  el_('addfood-manual-name')?.focus();
+});
 
 document.getElementById('addfood-photo-input')?.addEventListener('change', (e) => {
   const statusEl = el_('addfood-photo-status');
@@ -1345,11 +1497,17 @@ document.getElementById('addfood-capture-form')?.addEventListener('submit', asyn
     submitBtn.textContent = 'Asking your coach…';
     const { proposal } = await apiPost('analyzeFood', { photo, mealType, notes });
 
+    // Append to (never replace) any items already in the review list —
+    // someone can switch to "Add manually" first, add an item, then
+    // switch back and scan a photo too, all for the same meal.
+    // Wholesale-replacing addFoodState_ here would have silently
+    // thrown away whatever they'd already added by hand.
+    const existingItems = addFoodState_.items || [];
     addFoodState_ = {
-      items: (proposal.items || []).map((item) => Object.assign({ multiplier: 1, removed: false }, item)),
+      items: existingItems.concat((proposal.items || []).map((item) => Object.assign({ multiplier: 1, removed: false }, item))),
       overallConfidence: proposal.overallConfidence,
       coachNote: proposal.coachNote,
-      mealType,
+      mealType: addFoodState_.mealType || mealType,
       notes,
       photoBase64: photo.base64,
       photoMimeType: photo.mimeType
@@ -1360,7 +1518,7 @@ document.getElementById('addfood-capture-form')?.addEventListener('submit', asyn
     const reviewEl = el_('addfood-review');
     if (reviewEl) reviewEl.hidden = false;
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = idleLabel;
@@ -1372,6 +1530,12 @@ function renderAddFoodReview_() {
   if (confEl) confEl.textContent = addFoodState_.overallConfidence || '–';
   const noteEl = el_('addfood-coachnote');
   if (noteEl) noteEl.textContent = addFoodState_.coachNote || '';
+  // The confidence/coach-note card only means something when a photo
+  // was actually analyzed — a fully hand-typed meal has no AI
+  // confidence to report, so don't show an empty "Confidence: –" card
+  // for it.
+  const confCardEl = el_('addfood-confidence-card');
+  if (confCardEl) confCardEl.hidden = !addFoodState_.overallConfidence && !addFoodState_.coachNote;
 
   const itemsEl = el_('addfood-items');
   if (itemsEl) {
@@ -1413,7 +1577,12 @@ function buildAddFoodItemRow_(item, index) {
 
   const portionEl = document.createElement('div');
   portionEl.className = 'food-item-portion';
-  portionEl.textContent = `AI estimate: ${item.portionDescription} (~${Math.round(item.estimatedGrams)}g, ${item.confidence} confidence)`;
+  // A manually-typed item has no AI guess behind it — say so plainly
+  // instead of an "AI estimate: ... confidence" line that would be
+  // misleading (there was no AI involved in this item at all).
+  portionEl.textContent = item.confidence === 'manual'
+    ? `Entered manually — ${Math.round(item.estimatedGrams)}g baseline`
+    : `AI estimate: ${item.portionDescription} (~${Math.round(item.estimatedGrams)}g, ${item.confidence} confidence)`;
   row.appendChild(portionEl);
 
   const qtyRow = document.createElement('div');
@@ -1538,18 +1707,32 @@ document.getElementById('addfood-save-btn')?.addEventListener('click', async () 
       confidence: item.confidence
     }));
 
+    // Provenance for the Meals sheet — 'photo-ai' when every saved
+    // item came from the scanned photo, 'manual' when every item was
+    // typed in, 'mixed' on the (rare but possible) case someone scans
+    // a photo AND adds another item by hand before saving the same
+    // meal.
+    const allManual = activeItems.every((item) => item.confidence === 'manual');
+    const anyManual = activeItems.some((item) => item.confidence === 'manual');
+    const source = allManual ? 'manual' : (anyManual ? 'mixed' : 'photo-ai');
+
     await apiPost('saveMeal', {
       mealType: addFoodState_.mealType,
       notes: addFoodState_.notes,
       photo: addFoodState_.photoBase64 ? { base64: addFoodState_.photoBase64, mimeType: addFoodState_.photoMimeType } : null,
       items,
       overallConfidence: addFoodState_.overallConfidence,
-      coachNote: addFoodState_.coachNote
+      coachNote: addFoodState_.coachNote,
+      source
     });
     if (saveNoticeEl) saveNoticeEl.hidden = false;
     btn.textContent = 'Saved';
+    // So the dashboard's Calories/Protein tiles reflect what was just
+    // logged immediately, not only after the next full app reload —
+    // this is exactly the gap a real-device report caught.
+    refreshTodaySummary_();
   } catch (err) {
-    if (saveErrorEl) { saveErrorEl.textContent = err.message; saveErrorEl.hidden = false; }
+    if (saveErrorEl) { saveErrorEl.textContent = humanizeErrorMessage_(err.message); saveErrorEl.hidden = false; }
     btn.disabled = false;
     btn.textContent = idleLabel;
   }
@@ -1757,7 +1940,7 @@ async function openExercisePicker_() {
     exerciseLibraryCache_ = result.exercises || [];
     renderExercisePickerList_('');
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
     if (loadingEl) loadingEl.hidden = true;
     if (listEl) listEl.hidden = false;
@@ -2123,7 +2306,7 @@ document.getElementById('workout-finish-btn')?.addEventListener('click', async (
     workoutState_ = null;
     setTimeout(() => showScreen('screen-dashboard'), 1800);
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
   }
@@ -2151,7 +2334,7 @@ async function loadWorkoutHistory_() {
       listEl.hidden = false;
     }
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
     if (loadingEl) loadingEl.hidden = true;
   }
@@ -2217,7 +2400,7 @@ async function loadCoachHistory_() {
     if (emptyEl) emptyEl.hidden = messages.length > 0;
     scrollCoachToBottom_();
   } catch (err) {
-    if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+    if (errorEl) { errorEl.textContent = humanizeErrorMessage_(err.message); errorEl.hidden = false; }
   } finally {
     if (loadingEl) loadingEl.hidden = true;
     if (messagesEl) messagesEl.hidden = false;
@@ -2338,7 +2521,7 @@ function deriveExerciseIcon_(ex) {
  */
 function showAndRevealError_(el, message) {
   if (!el) return;
-  el.textContent = message;
+  el.textContent = humanizeErrorMessage_(message);
   el.hidden = false;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
